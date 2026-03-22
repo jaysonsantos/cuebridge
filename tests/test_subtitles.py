@@ -3,7 +3,6 @@ from __future__ import annotations
 from pathlib import Path
 
 import pysubs2
-
 from cuebridge.cancellation import CancellationToken
 from cuebridge.subtitles import (
     _build_window_prompt,

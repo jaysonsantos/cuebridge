@@ -79,7 +79,9 @@ def translate_subtitle_file(
                 cancellation_token=cancellation_token,
             )
             if window_result.cancelled:
-                logger.info("Discarding partially cancelled subtitle window without overwriting text")
+                logger.info(
+                    "Discarding partially cancelled subtitle window without overwriting text"
+                )
                 break
 
             for (event, _source_text), translated_text in zip(

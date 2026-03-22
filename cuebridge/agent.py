@@ -124,9 +124,7 @@ class LangChainSubtitleTranslator:
 
     def _request_config(self) -> RunnableConfig:
         return {
-            "configurable": {
-                "thread_id": self._thread_id if self._retain_history else str(uuid4())
-            }
+            "configurable": {"thread_id": self._thread_id if self._retain_history else str(uuid4())}
         }
 
     def translate_text(
