@@ -1,0 +1,9 @@
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Ignore local-only environment and virtualenv files"
+paths = [
+  '''(^|/)\.env$''',
+  '''(^|/)\.venv/.*$''',
+]
