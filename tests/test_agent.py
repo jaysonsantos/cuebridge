@@ -25,7 +25,11 @@ def test_langchain_translator_collects_stream_chunks(monkeypatch) -> None:
 
     monkeypatch.setattr(agent, "create_agent", lambda *args, **kwargs: FakeAgent())
 
-    translator = LangChainSubtitleTranslator(FakeModel(), thread_id="thread-1")
+    translator = LangChainSubtitleTranslator(
+        FakeModel(),
+        thread_id="thread-1",
+        retain_history=True,
+    )
 
     assert translator.translate_text("Hallo") == "Ola mundo"
 

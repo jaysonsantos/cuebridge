@@ -13,6 +13,10 @@ from cuebridge.naming import build_output_path
 from cuebridge.subtitles import TranslationResult, translate_subtitle_file
 
 SubtitleInputSource = Path | str | TextIO | BinaryIO
+OPENAI_COMPATIBLE_BACKENDS = {"openai-compatible", "cerebras", "openrouter"}
+DEFAULT_HF_LOCAL_WINDOW_SIZE = 4
+DEFAULT_OPENAI_COMPATIBLE_WINDOW_SIZE = 12
+DEFAULT_HISTORY_WINDOW_SIZE = 4
 
 
 @dataclass(frozen=True)
@@ -30,11 +34,12 @@ class TranslatorConfig:
     request_timeout_seconds: float = 120.0
     max_input_tokens: int = 1800
     thread_id: str | None = None
+    retain_history: bool = False
 
 
 @dataclass(frozen=True)
 class RuntimeOptions:
-    window_size: int = 4
+    window_size: int | None = None
     flush_every_chunks: int = 1
 
 
@@ -66,6 +71,7 @@ def run_subtitle_translation(request: SubtitleTranslationRequest) -> Translation
         request_timeout_seconds=request.translator_config.request_timeout_seconds,
         max_input_tokens=request.translator_config.max_input_tokens,
         thread_id=request.translator_config.thread_id,
+        retain_history=request.translator_config.retain_history,
     )
 
     with _resolved_input_path(request) as input_path:
@@ -78,7 +84,7 @@ def run_subtitle_translation(request: SubtitleTranslationRequest) -> Translation
             input_path=input_path,
             target_lang_code=request.target_lang_code,
             translator=translator,
-            window_size=request.runtime_options.window_size,
+            window_size=_resolve_window_size(request),
             flush_every_chunks=request.runtime_options.flush_every_chunks,
             output_path=resolved_output_path,
             cancellation_token=request.cancellation_token,
@@ -131,3 +137,16 @@ def _input_filename(input_source: TextIO | BinaryIO) -> str:
         return Path(source_name).name
 
     return "input.srt"
+
+
+def _resolve_window_size(request: SubtitleTranslationRequest) -> int:
+    if request.runtime_options.window_size is not None:
+        return request.runtime_options.window_size
+
+    if request.translator_config.retain_history:
+        return DEFAULT_HISTORY_WINDOW_SIZE
+
+    if request.translator_config.backend.lower() in OPENAI_COMPATIBLE_BACKENDS:
+        return DEFAULT_OPENAI_COMPATIBLE_WINDOW_SIZE
+
+    return DEFAULT_HF_LOCAL_WINDOW_SIZE

@@ -22,6 +22,13 @@ class TranslationResult:
     translated_events: int
 
 
+@dataclass(frozen=True)
+class WindowTranslationResult:
+    texts: list[str]
+    had_retry: bool
+    cancelled: bool = False
+
+
 def translate_subtitle_file(
     *,
     input_path: Path,
@@ -32,6 +39,9 @@ def translate_subtitle_file(
     output_path: Path | None = None,
     cancellation_token: CancellationToken | None = None,
 ) -> TranslationResult:
+    if window_size < 1:
+        raise ValueError(f"window_size must be at least 1, got {window_size}")
+
     subtitles = pysubs2.load(str(input_path))
     translated_events = 0
     translated_chunks = 0
@@ -46,6 +56,8 @@ def translate_subtitle_file(
         target_lang_code=target_lang_code,
         output_path=output_path,
     )
+    current_window_size = window_size
+    consecutive_window_failures = 0
 
     with tqdm(
         total=len(translatable_events),
@@ -53,32 +65,53 @@ def translate_subtitle_file(
         unit="line",
         dynamic_ncols=True,
     ) as progress:
-        for chunk_start in range(0, len(translatable_events), window_size):
+        chunk_start = 0
+        while chunk_start < len(translatable_events):
             if cancellation_token is not None and cancellation_token.cancelled:
                 logger.info("Stopping subtitle translation early due to cancellation request")
                 break
 
-            chunk = translatable_events[chunk_start : chunk_start + window_size]
-            translated_texts = translate_event_window(
+            chunk = translatable_events[chunk_start : chunk_start + current_window_size]
+            attempted_window_size = len(chunk)
+            window_result = _translate_event_window_result(
                 chunk=chunk,
                 translator=translator,
                 cancellation_token=cancellation_token,
             )
-            if translated_texts is None:
+            if window_result.cancelled:
                 logger.info(
                     "Discarding partially cancelled subtitle window without overwriting text"
                 )
                 break
 
-            for (event, _source_text), translated_text in zip(chunk, translated_texts, strict=True):
+            for (event, _source_text), translated_text in zip(
+                chunk, window_result.texts, strict=True
+            ):
                 translated_events += 1
                 logger.debug("Translated subtitle event {}", translated_events)
                 event.text = _encode_subtitle_text(translated_text)
             translated_chunks += 1
             progress.update(len(chunk))
+
+            if attempted_window_size == current_window_size and current_window_size > 1:
+                if window_result.had_retry:
+                    consecutive_window_failures += 1
+                    if consecutive_window_failures >= 2:
+                        new_window_size = _next_smaller_window_size(current_window_size)
+                        logger.info(
+                            "Reducing adaptive subtitle window size from {} to {} after repeated marker retries",
+                            current_window_size,
+                            new_window_size,
+                        )
+                        current_window_size = new_window_size
+                        consecutive_window_failures = 0
+                else:
+                    consecutive_window_failures = 0
+
             if translated_chunks % flush_every_chunks == 0:
                 _save_subtitles_atomic(subtitles, resolved_output_path)
                 logger.debug("Flushed partial subtitle output to {}", resolved_output_path)
+            chunk_start += len(chunk)
 
     logger.info(
         "Saving {} translated subtitle events to {}",
@@ -106,26 +139,64 @@ def translate_event_window(
     translator: TextTranslator,
     cancellation_token: CancellationToken | None = None,
 ) -> list[str] | None:
+    result = _translate_event_window_result(
+        chunk=chunk,
+        translator=translator,
+        cancellation_token=cancellation_token,
+    )
+    if result.cancelled:
+        return None
+
+    return result.texts
+
+
+def _translate_event_window_result(
+    *,
+    chunk: list[tuple[object, str]],
+    translator: TextTranslator,
+    cancellation_token: CancellationToken | None = None,
+) -> WindowTranslationResult:
     if len(chunk) == 1:
-        return [translator.translate_text(chunk[0][1], cancellation_token=cancellation_token)]
+        return WindowTranslationResult(
+            texts=[translator.translate_text(chunk[0][1], cancellation_token=cancellation_token)],
+            had_retry=False,
+        )
 
     prompt = _build_window_prompt([text for _event, text in chunk])
     translated = translator.translate_text(prompt, cancellation_token=cancellation_token)
     segments = _parse_window_translation(translated, expected_segments=len(chunk))
     if segments is not None:
-        return segments
+        return WindowTranslationResult(texts=segments, had_retry=False)
 
     if cancellation_token is not None and cancellation_token.cancelled:
-        logger.debug("Skipping single-event fallback for cancelled subtitle window")
-        return None
+        logger.debug("Skipping smaller-window retry for cancelled subtitle window")
+        return WindowTranslationResult(texts=[], had_retry=False, cancelled=True)
 
+    split_at = len(chunk) // 2
     logger.debug(
-        "Window translation markers did not round-trip cleanly; falling back to single-event translation"
+        "Window translation markers did not round-trip cleanly for {} events; retrying smaller windows",
+        len(chunk),
     )
-    return [
-        translator.translate_text(text, cancellation_token=cancellation_token)
-        for _event, text in chunk
-    ]
+    left = _translate_event_window_result(
+        chunk=chunk[:split_at],
+        translator=translator,
+        cancellation_token=cancellation_token,
+    )
+    if left.cancelled:
+        return WindowTranslationResult(texts=[], had_retry=True, cancelled=True)
+
+    right = _translate_event_window_result(
+        chunk=chunk[split_at:],
+        translator=translator,
+        cancellation_token=cancellation_token,
+    )
+    if right.cancelled:
+        return WindowTranslationResult(texts=[], had_retry=True, cancelled=True)
+
+    return WindowTranslationResult(
+        texts=[*left.texts, *right.texts],
+        had_retry=True,
+    )
 
 
 def _build_window_prompt(texts: list[str]) -> str:
@@ -176,3 +247,10 @@ def _save_subtitles_atomic(subtitles: pysubs2.SSAFile, output_path: Path) -> Non
     finally:
         if temp_path.exists():
             temp_path.unlink()
+
+
+def _next_smaller_window_size(window_size: int) -> int:
+    if window_size <= 2:
+        return 1
+
+    return (window_size + 1) // 2

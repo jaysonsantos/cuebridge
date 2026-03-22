@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import torch
-from cuebridge.agent import trim_messages_to_token_budget
+from cuebridge.agent import LangChainSubtitleTranslator, trim_messages_to_token_budget
 from cuebridge.model import OpenAICompatibleChatModel, TranslateGemmaChatModel
 from langchain_core.messages import AIMessage, HumanMessage
 
@@ -154,6 +154,44 @@ def test_trim_messages_to_token_budget_keeps_recent_history() -> None:
     )
 
     assert trimmed == messages[2:]
+
+
+def test_langchain_subtitle_translator_is_stateless_by_default(monkeypatch) -> None:
+    captured_thread_ids: list[str] = []
+
+    class FakeAgent:
+        def invoke(self, payload, config):
+            del payload
+            captured_thread_ids.append(config["configurable"]["thread_id"])
+            return {"messages": [AIMessage(content="ola")]}
+
+    monkeypatch.setattr("cuebridge.agent.create_agent", lambda *args, **kwargs: FakeAgent())
+
+    translator = LangChainSubtitleTranslator(model=_FakeCounterModel())
+    translator.translate_text("one")
+    translator.translate_text("two")
+
+    assert len(captured_thread_ids) == 2
+    assert captured_thread_ids[0] != captured_thread_ids[1]
+
+
+def test_langchain_subtitle_translator_reuses_thread_when_history_is_retained(monkeypatch) -> None:
+    captured_thread_ids: list[str] = []
+
+    class FakeAgent:
+        def invoke(self, payload, config):
+            del payload
+            captured_thread_ids.append(config["configurable"]["thread_id"])
+            return {"messages": [AIMessage(content="ola")]}
+
+    monkeypatch.setattr("cuebridge.agent.create_agent", lambda *args, **kwargs: FakeAgent())
+
+    translator = LangChainSubtitleTranslator(model=_FakeCounterModel(), retain_history=True)
+    translator.translate_text("one")
+    translator.translate_text("two")
+
+    assert len(captured_thread_ids) == 2
+    assert captured_thread_ids[0] == captured_thread_ids[1]
 
 
 class FakeResponse:
@@ -312,11 +350,17 @@ def _capture_openai_compatible_model_kwargs(monkeypatch) -> dict[str, object]:
             return len(messages)
 
     class FakeTranslator:
-        def __init__(self, model, *, thread_id, max_input_tokens) -> None:
+        def __init__(self, model, *, thread_id, max_input_tokens, retain_history) -> None:
             self.model = model
             self.thread_id = thread_id
             self.max_input_tokens = max_input_tokens
+            self.retain_history = retain_history
 
     monkeypatch.setattr(agent, "OpenAICompatibleChatModel", FakeOpenAICompatibleModel)
     monkeypatch.setattr(agent, "LangChainSubtitleTranslator", FakeTranslator)
     return captured_kwargs
+
+
+class _FakeCounterModel:
+    def count_input_tokens(self, messages) -> int:
+        return len(messages)
