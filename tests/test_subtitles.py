@@ -204,3 +204,26 @@ Line {idx}
 
     translated = pysubs2.load(str(result.output_path))
     assert translated[0].text == "[pt-BR] segment 1"
+
+
+def test_translate_subtitle_file_rejects_non_positive_window_size(tmp_path: Path) -> None:
+    input_path = tmp_path / "movie.en.srt"
+    input_path.write_text(
+        """1
+00:00:01,000 --> 00:00:02,500
+Hello there!
+""",
+        encoding="utf-8",
+    )
+
+    try:
+        translate_subtitle_file(
+            input_path=input_path,
+            target_lang_code="pt-BR",
+            translator=FakeTranslator(["[pt-BR] Hello there!"]),
+            window_size=0,
+        )
+    except ValueError as exc:
+        assert str(exc) == "window_size must be at least 1, got 0"
+    else:
+        raise AssertionError("Expected ValueError for non-positive window size")

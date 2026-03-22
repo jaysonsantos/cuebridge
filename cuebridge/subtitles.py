@@ -39,6 +39,9 @@ def translate_subtitle_file(
     output_path: Path | None = None,
     cancellation_token: CancellationToken | None = None,
 ) -> TranslationResult:
+    if window_size < 1:
+        raise ValueError(f"window_size must be at least 1, got {window_size}")
+
     subtitles = pysubs2.load(str(input_path))
     translated_events = 0
     translated_chunks = 0
