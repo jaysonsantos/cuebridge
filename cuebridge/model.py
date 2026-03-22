@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 import os
+from collections.abc import Iterator
 from typing import Any, Callable
 
 import requests
 import torch
 from langchain_core.language_models.chat_models import BaseChatModel
-from langchain_core.messages import AIMessage, BaseMessage, HumanMessage
-from langchain_core.outputs import ChatGeneration, ChatResult
+from langchain_core.messages import AIMessage, AIMessageChunk, BaseMessage, HumanMessage
+from langchain_core.outputs import ChatGeneration, ChatGenerationChunk, ChatResult
 from pydantic import ConfigDict, Field, PrivateAttr
 from transformers import AutoModelForImageTextToText, AutoProcessor
 
@@ -58,27 +59,23 @@ class TranslateGemmaChatModel(BaseChatModel):
         **kwargs: Any,
     ) -> ChatResult:
         del stop, run_manager, kwargs
-        inputs = self._tokenize_messages(messages).to(self._model_device())
-        input_len = inputs["input_ids"].shape[1]
+        translated_text = self._generate_translated_text(messages)
+        return ChatResult(generations=[ChatGeneration(message=AIMessage(content=translated_text))])
 
-        with torch.inference_mode():
-            generation = self._get_model().generate(
-                **inputs,
-                do_sample=False,
-                max_new_tokens=self.max_new_tokens,
-                pad_token_id=self._get_tokenizer().eos_token_id,
+    def _stream(
+        self,
+        messages: list[BaseMessage],
+        stop: list[str] | None = None,
+        run_manager: Any | None = None,
+        **kwargs: Any,
+    ) -> Iterator[ChatGenerationChunk]:
+        del stop, run_manager, kwargs
+        yield ChatGenerationChunk(
+            message=AIMessageChunk(
+                content=self._generate_translated_text(messages),
+                chunk_position="last",
             )
-
-        translated_text = (
-            self._get_tokenizer()
-            .decode(
-                generation[0][input_len:],
-                skip_special_tokens=True,
-            )
-            .strip()
         )
-        message = AIMessage(content=translated_text)
-        return ChatResult(generations=[ChatGeneration(message=message)])
 
     def count_input_tokens(self, messages: list[BaseMessage]) -> int:
         inputs = self._tokenize_messages(messages)
@@ -127,6 +124,27 @@ class TranslateGemmaChatModel(BaseChatModel):
             add_generation_prompt=True,
             return_dict=True,
             return_tensors="pt",
+        )
+
+    def _generate_translated_text(self, messages: list[BaseMessage]) -> str:
+        inputs = self._tokenize_messages(messages).to(self._model_device())
+        input_len = inputs["input_ids"].shape[1]
+
+        with torch.inference_mode():
+            generation = self._get_model().generate(
+                **inputs,
+                do_sample=False,
+                max_new_tokens=self.max_new_tokens,
+                pad_token_id=self._get_tokenizer().eos_token_id,
+            )
+
+        return (
+            self._get_tokenizer()
+            .decode(
+                generation[0][input_len:],
+                skip_special_tokens=True,
+            )
+            .strip()
         )
 
     def _format_message(self, message: BaseMessage) -> dict[str, Any]:
@@ -221,33 +239,23 @@ class OpenAICompatibleChatModel(BaseChatModel):
         **kwargs: Any,
     ) -> ChatResult:
         del stop, run_manager, kwargs
-        payload = {
-            "model": self.model_id,
-            "messages": [self._format_message(message) for message in messages],
-            "temperature": 0,
-            "max_tokens": self.max_new_tokens,
-        }
-        headers = {"Content-Type": "application/json"}
-        api_key = self._resolved_api_key()
-        if api_key:
-            headers["Authorization"] = f"Bearer {api_key}"
-
-        response = self._request_sender()(
-            self._chat_completions_url(),
-            headers=headers,
-            json=payload,
-            timeout=self.request_timeout_seconds,
-        )
-        try:
-            response.raise_for_status()
-        except requests.HTTPError as exc:
-            detail = response.text.strip()
-            raise ValueError(
-                f"OpenAI-compatible backend request failed with {response.status_code}: {detail}"
-            ) from exc
-        data = response.json()
-        translated_text = _message_to_text(data["choices"][0]["message"]["content"]).strip()
+        translated_text = self._generate_translated_text(messages)
         return ChatResult(generations=[ChatGeneration(message=AIMessage(content=translated_text))])
+
+    def _stream(
+        self,
+        messages: list[BaseMessage],
+        stop: list[str] | None = None,
+        run_manager: Any | None = None,
+        **kwargs: Any,
+    ) -> Iterator[ChatGenerationChunk]:
+        del stop, run_manager, kwargs
+        yield ChatGenerationChunk(
+            message=AIMessageChunk(
+                content=self._generate_translated_text(messages),
+                chunk_position="last",
+            )
+        )
 
     def count_input_tokens(self, messages: list[BaseMessage]) -> int:
         total = 0
@@ -295,6 +303,34 @@ class OpenAICompatibleChatModel(BaseChatModel):
 
     def _chat_completions_url(self) -> str:
         return f"{self.api_base_url.rstrip('/')}/chat/completions"
+
+    def _generate_translated_text(self, messages: list[BaseMessage]) -> str:
+        payload = {
+            "model": self.model_id,
+            "messages": [self._format_message(message) for message in messages],
+            "temperature": 0,
+            "max_tokens": self.max_new_tokens,
+        }
+        headers = {"Content-Type": "application/json"}
+        api_key = self._resolved_api_key()
+        if api_key:
+            headers["Authorization"] = f"Bearer {api_key}"
+
+        response = self._request_sender()(
+            self._chat_completions_url(),
+            headers=headers,
+            json=payload,
+            timeout=self.request_timeout_seconds,
+        )
+        try:
+            response.raise_for_status()
+        except requests.HTTPError as exc:
+            detail = response.text.strip()
+            raise ValueError(
+                f"OpenAI-compatible backend request failed with {response.status_code}: {detail}"
+            ) from exc
+        data = response.json()
+        return _message_to_text(data["choices"][0]["message"]["content"]).strip()
 
     def _request_sender(self) -> RequestSender:
         if self.request_sender is not None:

@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import BinaryIO, TextIO
 
 from cuebridge.agent import build_subtitle_translator
+from cuebridge.cancellation import CancellationToken
 from cuebridge.naming import build_output_path
 from cuebridge.subtitles import TranslationResult, translate_subtitle_file
 
@@ -45,6 +46,7 @@ class SubtitleTranslationRequest:
     translator_config: TranslatorConfig
     runtime_options: RuntimeOptions = field(default_factory=RuntimeOptions)
     output_path: Path | None = None
+    cancellation_token: CancellationToken | None = None
 
 
 def run_subtitle_translation(request: SubtitleTranslationRequest) -> TranslationResult:
@@ -79,6 +81,7 @@ def run_subtitle_translation(request: SubtitleTranslationRequest) -> Translation
             window_size=request.runtime_options.window_size,
             flush_every_chunks=request.runtime_options.flush_every_chunks,
             output_path=resolved_output_path,
+            cancellation_token=request.cancellation_token,
         )
 
 
