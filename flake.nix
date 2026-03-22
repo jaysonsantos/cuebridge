@@ -104,19 +104,6 @@
         in
         pythonSet.mkVirtualEnv "cuebridge" workspace.deps.default;
 
-      mkDevEnv =
-        pkgs:
-        let
-          pythonSet = mkPythonSet pkgs;
-          editableOverlay = workspace.mkEditablePyprojectOverlay {
-            root = "$REPO_ROOT";
-            members = [ "cuebridge" ];
-          };
-          editablePythonSet = pythonSet.overrideScope editableOverlay;
-        in
-        editablePythonSet.mkVirtualEnv "cuebridge-dev" {
-          cuebridge = [ "dev" ];
-        };
     in
     {
       overlays.default =
@@ -177,18 +164,18 @@
 
       devShells = forAllSystems (
         system:
-      let
+        let
           pkgs = import nixpkgs { inherit system; };
           pythonSet = mkPythonSet pkgs;
-          devEnv = mkDevEnv pkgs;
+          cxxRuntimePath = pkgs.lib.makeLibraryPath [ pkgs.stdenv.cc.cc ];
         in
         {
           default = pkgs.mkShell {
             packages = with pkgs; [
-              devEnv
               git
               gitleaks
               just
+              pythonSet.python
               uv
             ];
 
@@ -196,16 +183,17 @@
               UV_NO_SYNC = "1";
               UV_PYTHON = pythonSet.python.interpreter;
               UV_PYTHON_DOWNLOADS = "never";
-              VIRTUAL_ENV = "${devEnv}";
             };
 
             shellHook = ''
               unset PYTHONPATH
               export REPO_ROOT="$(git rev-parse --show-toplevel)"
-              export PATH="${devEnv}/bin:$PATH"
+              export PATH="$REPO_ROOT/.venv/bin:$PATH"
+              export LD_LIBRARY_PATH="${cxxRuntimePath}:$LD_LIBRARY_PATH"
 
               echo "CueBridge Nix environment loaded."
-              echo "Use 'just lint', 'just test', 'just all', or 'cuebridge'."
+              echo "Run 'uv sync --dev' to install Python dependencies into .venv."
+              echo "Then use 'just lint', 'just test', 'just all', or 'cuebridge'."
             '';
           };
         }
