@@ -2,7 +2,8 @@ from __future__ import annotations
 
 from collections.abc import Iterable, Iterator
 from dataclasses import dataclass
-from typing import Protocol
+from pathlib import Path
+from typing import Literal, Protocol, TypeAlias
 
 from cuebridge.cancellation import CancellationToken
 
@@ -12,6 +13,31 @@ class TranslationChunk:
     """Append-only translation fragment yielded in stream order."""
 
     text: str
+
+
+TranslationStatus: TypeAlias = Literal["translated", "flushed", "completed", "cancelled"]
+
+
+@dataclass(frozen=True, slots=True)
+class TranslationCheckpoint:
+    output_path: Path
+    translated_events: int
+    translated_chunks: int
+    persisted: bool
+
+
+@dataclass(frozen=True, slots=True)
+class TranslationEvent:
+    status: TranslationStatus
+    output_path: Path
+    translated_events: int
+    translated_chunks: int
+    cue_index: int | None = None
+    cue_range: tuple[int, int] | None = None
+    source_text: str | None = None
+    translated_text: str | None = None
+    checkpoint: TranslationCheckpoint | None = None
+    cancellation_reason: str | None = None
 
 
 class TextTranslator(Protocol):
