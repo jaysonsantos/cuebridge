@@ -16,8 +16,9 @@ jobs:
 
       - name: Install Nix
         uses: cachix/install-nix-action@v31
-        with:
-          github_access_token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Install Python dependencies
+        run: nix develop path:. -c uv sync --dev
 
       - name: Run lint recipe
         run: nix develop path:. -c just lint
@@ -30,8 +31,9 @@ jobs:
 
       - name: Install Nix
         uses: cachix/install-nix-action@v31
-        with:
-          github_access_token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Install Python dependencies
+        run: nix develop path:. -c uv sync --dev
 
       - name: Run test recipe
         run: nix develop path:. -c just test
