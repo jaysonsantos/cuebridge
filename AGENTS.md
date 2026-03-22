@@ -25,7 +25,7 @@ Target Python 3.12+ and follow the existing style: 4-space indentation, explicit
 Tests use `pytest`. Name files `test_<feature>.py` and test functions `test_<behavior>()`. Prefer fixtures and temporary files over real model calls; `tests/test_cli.py` shows the expected pattern with a fake translator and `CliRunner`. When changing translation flow, add coverage for output naming, chunk/window behavior, and written subtitle text.
 
 ## Commit & Pull Request Guidelines
-This repository currently has no commit history, so there is no established message convention to copy. Use short, imperative subjects and prefer Conventional Commit prefixes like `feat:`, `fix:`, or `test:`. Pull requests should include a brief summary, the commands you ran (for example `uv run pytest`), and any representative CLI example or sample subtitle output when behavior changes.
+This repository currently has no commit history, so there is no established message convention to copy. Use short, imperative subjects and prefer Conventional Commit prefixes like `feat:`, `fix:`, or `test:`. When opening a pull request, use a semantic/conventional-commit PR title as well, because squash merging will use the PR title as the final commit message. Pull requests should include a brief summary, the commands you ran (for example `uv run pytest`), and any representative CLI example or sample subtitle output when behavior changes.
 
 ## Security & Configuration Tips
 Store API keys in `.env` or environment variables such as `OPENAI_API_KEY`; do not hardcode secrets. If you use Hugging Face locally, accept the TranslateGemma model license before running the CLI.
