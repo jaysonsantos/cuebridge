@@ -5,13 +5,15 @@ CLI subtitle translator powered by LLMs.
 ## Setup
 
 1. Accept the TranslateGemma license on Hugging Face: <https://huggingface.co/google/translategemma-4b-it>
-2. Enter the dev shell if you use Nix:
+2. If you use Nix, enter the dev shell:
 
 ```bash
 nix develop
 ```
 
-3. Sync dependencies:
+This shell now provides a locked Python environment from `pyproject.toml` and `uv.lock`, so you can run `just test`, `just lint`, `just all`, or `cuebridge` immediately without `uv sync`.
+
+3. If you are not using Nix, sync dependencies with `uv`:
 
 ```bash
 uv sync --dev
@@ -23,6 +25,34 @@ uv sync --dev
 just lint
 just test
 just all
+```
+
+## Nix
+
+Build the installable package:
+
+```bash
+nix build .#cuebridge
+```
+
+Run the CLI directly from the flake:
+
+```bash
+nix run .#cuebridge -- subtitles/movie.de.srt --source-lang de --target-lang pt-BR
+```
+
+The flake also exports an overlay, so another flake can consume it as `cuebridge`:
+
+```nix
+{
+  inputs.cuebridge.url = "github:your-user/cuebridge";
+
+  outputs = { self, nixpkgs, cuebridge, ... }: {
+    overlays.default = nixpkgs.lib.composeManyExtensions [
+      cuebridge.overlays.default
+    ];
+  };
+}
 ```
 
 ## Usage
