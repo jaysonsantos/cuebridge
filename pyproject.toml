@@ -1,7 +1,7 @@
 [project]
 name = "cuebridge"
 version = "0.1.0"
-description = "CueBridge: a CLI subtitle translator built around TranslateGemma."
+description = "CLI subtitle translator powered by LLMs."
 readme = "README.md"
 requires-python = ">=3.12,<3.14"
 dependencies = [

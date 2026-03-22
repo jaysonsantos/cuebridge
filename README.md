@@ -1,6 +1,6 @@
 # CueBridge
 
-Translate subtitle files with `google/translategemma-4b-it`, `click`, `loguru`, `pysubs2`, and a small LangChain/LangGraph wrapper that keeps recent conversation history trimmed across subtitle lines.
+CLI subtitle translator powered by LLMs.
 
 ## Setup
 
