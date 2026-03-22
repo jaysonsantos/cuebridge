@@ -177,9 +177,10 @@
 
       devShells = forAllSystems (
         system:
-      let
+        let
           pkgs = import nixpkgs { inherit system; };
           pythonSet = mkPythonSet pkgs;
+          cxxRuntimePath = pkgs.lib.makeLibraryPath [ pkgs.stdenv.cc.cc ];
           devEnv = mkDevEnv pkgs;
         in
         {
@@ -203,6 +204,7 @@
               unset PYTHONPATH
               export REPO_ROOT="$(git rev-parse --show-toplevel)"
               export PATH="${devEnv}/bin:$PATH"
+              export LD_LIBRARY_PATH="${cxxRuntimePath}:$LD_LIBRARY_PATH"
 
               echo "CueBridge Nix environment loaded."
               echo "Use 'just lint', 'just test', 'just all', or 'cuebridge'."
