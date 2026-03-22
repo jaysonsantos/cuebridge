@@ -150,7 +150,9 @@ How are you?
     assert translated[1].text == "How are you?"
 
 
-def test_iter_translate_subtitles_emits_translation_flush_and_terminal_events(tmp_path: Path) -> None:
+def test_iter_translate_subtitles_emits_translation_flush_and_terminal_events(
+    tmp_path: Path,
+) -> None:
     input_path = tmp_path / "movie.en.srt"
     input_path.write_text(
         """1
