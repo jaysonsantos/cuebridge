@@ -101,8 +101,12 @@
         pkgs:
         let
           pythonSet = mkPythonSet pkgs;
+          virtualenv = pythonSet.mkVirtualEnv "cuebridge-env" workspace.deps.default;
         in
-        pythonSet.mkVirtualEnv "cuebridge" workspace.deps.default;
+        pkgs.runCommand "cuebridge" { } ''
+          mkdir -p "$out/bin"
+          ln -s "${virtualenv}/bin/cuebridge" "$out/bin/cuebridge"
+        '';
 
     in
     {
@@ -110,9 +114,13 @@
         final: prev:
         let
           pythonSet = mkPythonSet prev;
+          virtualenv = pythonSet.mkVirtualEnv "cuebridge-env" workspace.deps.default;
         in
         {
-          cuebridge = pythonSet.mkVirtualEnv "cuebridge" workspace.deps.default;
+          cuebridge = prev.runCommand "cuebridge" { } ''
+            mkdir -p "$out/bin"
+            ln -s "${virtualenv}/bin/cuebridge" "$out/bin/cuebridge"
+          '';
           cuebridge-unwrapped = pythonSet.cuebridge;
           cuebridge-python-set = pythonSet;
         };
