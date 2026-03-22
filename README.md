@@ -67,6 +67,10 @@ The default translation mode groups `4` subtitle events per request to give Tran
 
 The output `.srt` is rewritten after each translated chunk by default, so you can watch progress in the final destination file while the job is still running. Use `--flush-every-chunks` to change that cadence.
 
+Internally, translators now expose both a one-shot `translate_text(...)` path and a streaming `translate_text_stream(...)` path. Streaming yields append-only translation fragments in order; backends that cannot truly stream yet bridge by yielding a single final chunk.
+
+Cancellation is cooperative and best-effort rather than immediate. CueBridge checks for cancellation before starting the next subtitle window and between emitted translation chunks, but an in-flight backend request may still complete. That means partial stream output may already have been yielded, and completed subtitle windows may already have been flushed to disk, by the time cancellation is observed.
+
 ### LM Studio / OpenAI-Compatible
 
 You can also target an OpenAI-compatible `/v1/chat/completions` server such as LM Studio:

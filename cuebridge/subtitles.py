@@ -9,6 +9,7 @@ import pysubs2
 from loguru import logger
 from tqdm import tqdm
 
+from cuebridge.cancellation import CancellationToken
 from cuebridge.contracts import TextTranslator
 from cuebridge.naming import build_output_path
 
@@ -29,6 +30,7 @@ def translate_subtitle_file(
     window_size: int = 4,
     flush_every_chunks: int = 1,
     output_path: Path | None = None,
+    cancellation_token: CancellationToken | None = None,
 ) -> TranslationResult:
     subtitles = pysubs2.load(str(input_path))
     translated_events = 0
@@ -52,8 +54,22 @@ def translate_subtitle_file(
         dynamic_ncols=True,
     ) as progress:
         for chunk_start in range(0, len(translatable_events), window_size):
+            if cancellation_token is not None and cancellation_token.cancelled:
+                logger.info("Stopping subtitle translation early due to cancellation request")
+                break
+
             chunk = translatable_events[chunk_start : chunk_start + window_size]
-            translated_texts = translate_event_window(chunk=chunk, translator=translator)
+            translated_texts = translate_event_window(
+                chunk=chunk,
+                translator=translator,
+                cancellation_token=cancellation_token,
+            )
+            if translated_texts is None:
+                logger.info(
+                    "Discarding partially cancelled subtitle window without overwriting text"
+                )
+                break
+
             for (event, _source_text), translated_text in zip(chunk, translated_texts, strict=True):
                 translated_events += 1
                 logger.debug("Translated subtitle event {}", translated_events)
@@ -88,20 +104,28 @@ def translate_event_window(
     *,
     chunk: list[tuple[object, str]],
     translator: TextTranslator,
-) -> list[str]:
+    cancellation_token: CancellationToken | None = None,
+) -> list[str] | None:
     if len(chunk) == 1:
-        return [translator.translate_text(chunk[0][1])]
+        return [translator.translate_text(chunk[0][1], cancellation_token=cancellation_token)]
 
     prompt = _build_window_prompt([text for _event, text in chunk])
-    translated = translator.translate_text(prompt)
+    translated = translator.translate_text(prompt, cancellation_token=cancellation_token)
     segments = _parse_window_translation(translated, expected_segments=len(chunk))
     if segments is not None:
         return segments
 
+    if cancellation_token is not None and cancellation_token.cancelled:
+        logger.debug("Skipping single-event fallback for cancelled subtitle window")
+        return None
+
     logger.debug(
         "Window translation markers did not round-trip cleanly; falling back to single-event translation"
     )
-    return [translator.translate_text(text) for _event, text in chunk]
+    return [
+        translator.translate_text(text, cancellation_token=cancellation_token)
+        for _event, text in chunk
+    ]
 
 
 def _build_window_prompt(texts: list[str]) -> str:

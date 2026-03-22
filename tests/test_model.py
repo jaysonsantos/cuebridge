@@ -100,6 +100,20 @@ def test_model_formats_full_history_for_translategemma() -> None:
     assert fake_model.generate_calls[0]["pad_token_id"] == 99
     assert fake_model.generate_calls[0]["max_new_tokens"] == 256
 
+    streamed = list(
+        model._stream(
+            [
+                HumanMessage(content="Hello"),
+                AIMessage(content="Ola"),
+                HumanMessage(content="Goodbye"),
+            ]
+        )
+    )
+
+    assert len(streamed) == 1
+    assert streamed[0].message.content == "translated text"
+    assert streamed[0].message.chunk_position == "last"
+
 
 def test_model_rejects_unsupported_dtype() -> None:
     model = TranslateGemmaChatModel(
@@ -198,6 +212,20 @@ def test_openai_compatible_model_formats_chat_completions_request() -> None:
         "role": "assistant",
         "content": "ola mundo",
     }
+
+    streamed = list(
+        model._stream(
+            [
+                HumanMessage(content="Hallo Welt"),
+                AIMessage(content="ola mundo"),
+                HumanMessage(content="Wie geht es dir?"),
+            ]
+        )
+    )
+
+    assert len(streamed) == 1
+    assert streamed[0].message.content == "ola mundo"
+    assert streamed[0].message.chunk_position == "last"
 
 
 def test_build_subtitle_translator_uses_cerebras_defaults(monkeypatch) -> None:

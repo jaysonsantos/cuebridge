@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pysubs2
 from cuebridge import service
+from cuebridge.cancellation import CancellationToken
 from cuebridge.service import RuntimeOptions, SubtitleTranslationRequest, TranslatorConfig
 
 SEGMENT_MARKER_RE = re.compile(r"(\[\[SEG_\d+]])")
@@ -15,7 +16,8 @@ class FakeTranslator:
     def __init__(self, target_lang_code: str) -> None:
         self.target_lang_code = target_lang_code
 
-    def translate_text(self, text: str) -> str:
+    def translate_text(self, text: str, cancellation_token: CancellationToken | None = None) -> str:
+        del cancellation_token
         if "[[SEG_" in text:
             parts = SEGMENT_MARKER_RE.split(text)
             output_parts: list[str] = []
@@ -97,7 +99,9 @@ Hello there!
     assert translated[0].text == "[pt-BR] Hello there!"
 
 
-def test_service_passes_known_backend_name_to_translator_builder(monkeypatch, tmp_path: Path) -> None:
+def test_service_passes_known_backend_name_to_translator_builder(
+    monkeypatch, tmp_path: Path
+) -> None:
     captured_kwargs: list[dict[str, object]] = []
 
     def fake_builder(**kwargs):

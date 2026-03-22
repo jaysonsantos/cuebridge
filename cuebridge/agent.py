@@ -1,19 +1,24 @@
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from typing import Any, Protocol
 from uuid import uuid4
 
 from langchain.agents import AgentState, create_agent
 from langchain.agents.middleware import before_model
 from langchain.messages import RemoveMessage
-from langchain_core.messages import AIMessage, BaseMessage, HumanMessage
+from langchain_core.messages import AIMessage, AIMessageChunk, BaseMessage, HumanMessage
 from langchain_core.runnables import RunnableConfig
 from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.graph.message import REMOVE_ALL_MESSAGES
 from langgraph.runtime import Runtime
 
-from cuebridge.contracts import TextTranslator
+from cuebridge.cancellation import CancellationToken
+from cuebridge.contracts import (
+    StreamingTextTranslator,
+    TranslationChunk,
+    collect_translation_text,
+)
 from cuebridge.model import OpenAICompatibleChatModel, TranslateGemmaChatModel
 
 OPENAI_COMPATIBLE_BACKEND_DEFAULTS = {
@@ -115,14 +120,45 @@ class LangChainSubtitleTranslator:
         )
         self._config: RunnableConfig = {"configurable": {"thread_id": thread_id or str(uuid4())}}
 
-    def translate_text(self, text: str) -> str:
-        response = self._agent.invoke({"messages": text}, self._config)
-        message = response["messages"][-1]
+    def translate_text(
+        self,
+        text: str,
+        cancellation_token: CancellationToken | None = None,
+    ) -> str:
+        translated = collect_translation_text(
+            self.translate_text_stream(text, cancellation_token=cancellation_token)
+        )
+        if translated or (cancellation_token is not None and cancellation_token.cancelled):
+            return translated
 
-        if isinstance(message, AIMessage):
-            return _message_text(message.content)
+        raise TypeError("Expected streamed translation output from LangChain agent")
 
-        raise TypeError(f"Expected AIMessage, got {type(message)!r}")
+    def translate_text_stream(
+        self,
+        text: str,
+        cancellation_token: CancellationToken | None = None,
+    ) -> Iterator[TranslationChunk]:
+        if cancellation_token is not None and cancellation_token.cancelled:
+            return
+
+        for event in self._agent.stream(
+            {"messages": text},
+            self._config,
+            stream_mode="messages",
+        ):
+            if cancellation_token is not None and cancellation_token.cancelled:
+                return
+
+            if not isinstance(event, tuple) or len(event) != 2:
+                continue
+
+            message, _metadata = event
+            if not isinstance(message, AIMessage | AIMessageChunk):
+                continue
+
+            chunk_text = _message_text(message.content)
+            if chunk_text:
+                yield TranslationChunk(text=chunk_text)
 
 
 def build_subtitle_translator(
@@ -142,7 +178,7 @@ def build_subtitle_translator(
     message_format: str = "auto",
     max_input_tokens: int = 1800,
     thread_id: str | None = None,
-) -> TextTranslator:
+) -> StreamingTextTranslator:
     backend_name = backend.lower()
 
     if backend_name == "hf-local":
