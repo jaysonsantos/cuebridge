@@ -1,51 +1,29 @@
 from __future__ import annotations
 
-import re
 from pathlib import Path
 
-import pysubs2
 from click.testing import CliRunner
 from cuebridge import cli
 from cuebridge.naming import build_output_path
-
-SEGMENT_MARKER_RE = re.compile(r"(\[\[SEG_\d+]])")
-
-
-class FakeTranslator:
-    def __init__(self, target_lang_code: str) -> None:
-        self.target_lang_code = target_lang_code
-
-    def translate_text(self, text: str) -> str:
-        if "[[SEG_" in text:
-            parts = SEGMENT_MARKER_RE.split(text)
-            output_parts: list[str] = []
-            current_marker: str | None = None
-            for part in parts:
-                if not part:
-                    continue
-                if SEGMENT_MARKER_RE.fullmatch(part):
-                    current_marker = part
-                    output_parts.append(part)
-                    continue
-                if current_marker is not None:
-                    output_parts.append(f"[{self.target_lang_code}] {part.strip()}")
-                    current_marker = None
-            return "\n".join(output_parts)
-
-        return f"[{self.target_lang_code}] {text}"
+from cuebridge.service import RuntimeOptions, SubtitleTranslationRequest, TranslatorConfig
+from cuebridge.subtitles import TranslationResult
 
 
-def test_cli_translates_samples_and_uses_target_language_suffix(
+def test_cli_calls_service_with_parsed_request_and_prints_output_path(
     monkeypatch,
     subtitle_samples,
 ) -> None:
-    calls: list[tuple[str, str]] = []
+    requests: list[SubtitleTranslationRequest] = []
 
-    def fake_builder(**kwargs):
-        calls.append((kwargs["source_lang_code"], kwargs["target_lang_code"]))
-        return FakeTranslator(kwargs["target_lang_code"])
+    def fake_service(request: SubtitleTranslationRequest) -> TranslationResult:
+        requests.append(request)
+        input_path = Path(request.input_source)
+        return TranslationResult(
+            output_path=build_output_path(input_path, request.target_lang_code),
+            translated_events=2,
+        )
 
-    monkeypatch.setattr(cli, "build_subtitle_translator", fake_builder)
+    monkeypatch.setattr(cli, "run_subtitle_translation", fake_service)
     runner = CliRunner()
 
     for sample in subtitle_samples:
@@ -64,9 +42,23 @@ def test_cli_translates_samples_and_uses_target_language_suffix(
         assert result.exit_code == 0, result.output
 
         output_path = build_output_path(input_path, "pt-BR")
-        assert output_path.exists()
+        assert result.output.strip() == str(output_path)
 
-        translated = pysubs2.load(str(output_path))
-        assert translated[0].text.startswith("[pt-BR]")
-
-    assert calls == [("en", "pt-BR"), ("es", "pt-BR")]
+    assert requests == [
+        SubtitleTranslationRequest(
+            input_source=Path(subtitle_samples[0].filename),
+            source_lang_code="en",
+            target_lang_code="pt-BR",
+            translator_config=TranslatorConfig(model_id=cli.DEFAULT_MODEL_ID),
+            runtime_options=RuntimeOptions(),
+            output_path=None,
+        ),
+        SubtitleTranslationRequest(
+            input_source=Path(subtitle_samples[1].filename),
+            source_lang_code="es",
+            target_lang_code="pt-BR",
+            translator_config=TranslatorConfig(model_id=cli.DEFAULT_MODEL_ID),
+            runtime_options=RuntimeOptions(),
+            output_path=None,
+        ),
+    ]

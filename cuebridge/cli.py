@@ -7,8 +7,12 @@ import click
 from dotenv import load_dotenv
 from loguru import logger
 
-from cuebridge.agent import build_subtitle_translator
-from cuebridge.subtitles import translate_subtitle_file
+from cuebridge.service import (
+    RuntimeOptions,
+    SubtitleTranslationRequest,
+    TranslatorConfig,
+    run_subtitle_translation,
+)
 
 DEFAULT_MODEL_ID = "google/translategemma-4b-it"
 
@@ -102,31 +106,32 @@ def main(
     load_dotenv()
     configure_logging(verbose=verbose)
 
-    translator = build_subtitle_translator(
-        source_lang_code=source_lang,
-        target_lang_code=target_lang,
-        model_id=model_id,
-        backend=backend,
-        dtype=dtype,
-        device=device,
-        max_new_tokens=max_new_tokens,
-        batch_size=batch_size,
-        api_base_url=api_base_url,
-        message_format=message_format,
-        api_key=api_key,
-        api_key_env=api_key_env,
-        request_timeout_seconds=request_timeout_seconds,
-        max_input_tokens=max_input_tokens,
-        thread_id=thread_id,
-    )
-
-    result = translate_subtitle_file(
-        input_path=input_path,
-        target_lang_code=target_lang,
-        translator=translator,
-        window_size=window_size,
-        flush_every_chunks=flush_every_chunks,
-        output_path=output_path,
+    result = run_subtitle_translation(
+        SubtitleTranslationRequest(
+            input_source=input_path,
+            source_lang_code=source_lang,
+            target_lang_code=target_lang,
+            output_path=output_path,
+            translator_config=TranslatorConfig(
+                backend=backend,
+                model_id=model_id,
+                dtype=dtype,
+                device=device,
+                max_new_tokens=max_new_tokens,
+                batch_size=batch_size,
+                api_base_url=api_base_url,
+                message_format=message_format,
+                api_key=api_key,
+                api_key_env=api_key_env,
+                request_timeout_seconds=request_timeout_seconds,
+                max_input_tokens=max_input_tokens,
+                thread_id=thread_id,
+            ),
+            runtime_options=RuntimeOptions(
+                window_size=window_size,
+                flush_every_chunks=flush_every_chunks,
+            ),
+        )
     )
 
     click.echo(str(result.output_path))
