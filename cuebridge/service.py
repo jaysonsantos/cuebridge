@@ -25,7 +25,7 @@ class TranslatorConfig:
     api_base_url: str | None = None
     message_format: str = "auto"
     api_key: str | None = None
-    api_key_env: str = "OPENAI_API_KEY"
+    api_key_env: str | None = None
     request_timeout_seconds: float = 120.0
     max_input_tokens: int = 1800
     thread_id: str | None = None

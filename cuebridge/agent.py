@@ -16,6 +16,21 @@ from langgraph.runtime import Runtime
 from cuebridge.contracts import TextTranslator
 from cuebridge.model import OpenAICompatibleChatModel, TranslateGemmaChatModel
 
+OPENAI_COMPATIBLE_BACKEND_DEFAULTS = {
+    "openai-compatible": {
+        "api_base_url": "http://localhost:1234/v1",
+        "api_key_env": "OPENAI_API_KEY",
+    },
+    "cerebras": {
+        "api_base_url": "https://api.cerebras.ai/v1",
+        "api_key_env": "CEREBRAS_API_KEY",
+    },
+    "openrouter": {
+        "api_base_url": "https://openrouter.ai/api/v1",
+        "api_key_env": "OPENROUTER_API_KEY",
+    },
+}
+
 
 class SupportsTokenCounting(Protocol):
     def count_input_tokens(self, messages: list[BaseMessage]) -> int: ...
@@ -122,13 +137,15 @@ def build_subtitle_translator(
     batch_size: int,
     api_base_url: str | None = None,
     api_key: str | None = None,
-    api_key_env: str = "OPENAI_API_KEY",
+    api_key_env: str | None = None,
     request_timeout_seconds: float = 120.0,
     message_format: str = "auto",
     max_input_tokens: int = 1800,
     thread_id: str | None = None,
 ) -> TextTranslator:
-    if backend == "hf-local":
+    backend_name = backend.lower()
+
+    if backend_name == "hf-local":
         model: SupportsTokenCounting = TranslateGemmaChatModel(
             source_lang_code=source_lang_code,
             target_lang_code=target_lang_code,
@@ -138,14 +155,19 @@ def build_subtitle_translator(
             max_new_tokens=max_new_tokens,
             batch_size=batch_size,
         )
-    elif backend == "openai-compatible":
+    elif backend_name in OPENAI_COMPATIBLE_BACKEND_DEFAULTS:
+        resolved_backend = _resolve_openai_compatible_backend(
+            backend=backend_name,
+            api_base_url=api_base_url,
+            api_key_env=api_key_env,
+        )
         model = OpenAICompatibleChatModel(
             source_lang_code=source_lang_code,
             target_lang_code=target_lang_code,
             model_id=model_id,
-            api_base_url=api_base_url or "http://localhost:1234/v1",
+            api_base_url=resolved_backend["api_base_url"],
             api_key=api_key,
-            api_key_env=api_key_env,
+            api_key_env=resolved_backend["api_key_env"],
             request_timeout_seconds=request_timeout_seconds,
             message_format=message_format,
             max_new_tokens=max_new_tokens,
@@ -158,6 +180,19 @@ def build_subtitle_translator(
         thread_id=thread_id,
         max_input_tokens=max_input_tokens,
     )
+
+
+def _resolve_openai_compatible_backend(
+    *,
+    backend: str,
+    api_base_url: str | None,
+    api_key_env: str | None,
+) -> dict[str, str]:
+    defaults = OPENAI_COMPATIBLE_BACKEND_DEFAULTS[backend]
+    return {
+        "api_base_url": api_base_url or defaults["api_base_url"],
+        "api_key_env": api_key_env or defaults["api_key_env"],
+    }
 
 
 def _message_text(content: str | list[dict[str, Any] | str]) -> str:

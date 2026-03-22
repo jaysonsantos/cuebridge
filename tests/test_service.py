@@ -95,3 +95,35 @@ Hello there!
     assert result.output_path == output_path
     translated = pysubs2.load(str(output_path))
     assert translated[0].text == "[pt-BR] Hello there!"
+
+
+def test_service_passes_known_backend_name_to_translator_builder(monkeypatch, tmp_path: Path) -> None:
+    captured_kwargs: list[dict[str, object]] = []
+
+    def fake_builder(**kwargs):
+        captured_kwargs.append(kwargs)
+        return FakeTranslator(kwargs["target_lang_code"])
+
+    monkeypatch.setattr(service, "build_subtitle_translator", fake_builder)
+
+    input_path = tmp_path / "movie.en.srt"
+    input_path.write_text(
+        """1
+00:00:01,000 --> 00:00:02,500
+Hello there!
+""",
+        encoding="utf-8",
+    )
+
+    service.run_subtitle_translation(
+        SubtitleTranslationRequest(
+            input_source=input_path,
+            source_lang_code="en",
+            target_lang_code="pt-BR",
+            translator_config=TranslatorConfig(model_id="fake-model", backend="openrouter"),
+        )
+    )
+
+    assert captured_kwargs[0]["backend"] == "openrouter"
+    assert captured_kwargs[0]["api_base_url"] is None
+    assert captured_kwargs[0]["api_key_env"] is None

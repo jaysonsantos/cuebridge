@@ -32,8 +32,11 @@ DEFAULT_MODEL_ID = "google/translategemma-4b-it"
 @click.option(
     "--backend",
     default="hf-local",
-    type=click.Choice(["hf-local", "openai-compatible"], case_sensitive=False),
-    help="Model backend.",
+    type=click.Choice(
+        ["hf-local", "openai-compatible", "cerebras", "openrouter"],
+        case_sensitive=False,
+    ),
+    help="Model backend. Known OpenAI-compatible providers fill in their default base URL.",
 )
 @click.option("--model-id", default=DEFAULT_MODEL_ID, help="Backend-specific model id.")
 @click.option(
@@ -45,7 +48,7 @@ DEFAULT_MODEL_ID = "google/translategemma-4b-it"
 @click.option(
     "--api-base-url",
     default=None,
-    help="Base URL for OpenAI-compatible endpoints, for example http://localhost:1234/v1 or https://openrouter.ai/api/v1.",
+    help="Optional override for OpenAI-compatible endpoints. Known providers set this automatically.",
 )
 @click.option(
     "--message-format",
@@ -56,8 +59,8 @@ DEFAULT_MODEL_ID = "google/translategemma-4b-it"
 @click.option("--api-key", default=None, help="Optional API key for OpenAI-compatible endpoints.")
 @click.option(
     "--api-key-env",
-    default="OPENAI_API_KEY",
-    help="Environment variable to read the API key from when --api-key is omitted.",
+    default=None,
+    help="Optional environment variable to read the API key from when --api-key is omitted.",
 )
 @click.option("--request-timeout-seconds", default=120.0, type=float)
 @click.option(
@@ -94,7 +97,7 @@ def main(
     api_base_url: str | None,
     message_format: str,
     api_key: str | None,
-    api_key_env: str,
+    api_key_env: str | None,
     request_timeout_seconds: float,
     window_size: int,
     flush_every_chunks: int,

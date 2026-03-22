@@ -62,3 +62,39 @@ def test_cli_calls_service_with_parsed_request_and_prints_output_path(
             output_path=None,
         ),
     ]
+
+
+def test_cli_accepts_known_openai_compatible_backend_names(monkeypatch, subtitle_samples) -> None:
+    requests: list[SubtitleTranslationRequest] = []
+
+    def fake_service(request: SubtitleTranslationRequest) -> TranslationResult:
+        requests.append(request)
+        return TranslationResult(output_path=Path("/tmp/out.srt"), translated_events=1)
+
+    monkeypatch.setattr(cli, "run_subtitle_translation", fake_service)
+    runner = CliRunner()
+
+    result = runner.invoke(
+        cli.main,
+        [
+            subtitle_samples[0].filename,
+            "--source-lang",
+            "en",
+            "--target-lang",
+            "pt-BR",
+            "--backend",
+            "cerebras",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert requests == [
+        SubtitleTranslationRequest(
+            input_source=Path(subtitle_samples[0].filename),
+            source_lang_code="en",
+            target_lang_code="pt-BR",
+            translator_config=TranslatorConfig(model_id=cli.DEFAULT_MODEL_ID, backend="cerebras"),
+            runtime_options=RuntimeOptions(),
+            output_path=None,
+        )
+    ]

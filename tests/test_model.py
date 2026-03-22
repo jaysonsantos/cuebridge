@@ -198,3 +198,97 @@ def test_openai_compatible_model_formats_chat_completions_request() -> None:
         "role": "assistant",
         "content": "ola mundo",
     }
+
+
+def test_build_subtitle_translator_uses_cerebras_defaults(monkeypatch) -> None:
+    captured_kwargs = _capture_openai_compatible_model_kwargs(monkeypatch)
+
+    _build_translator_for_test(backend="cerebras")
+
+    assert captured_kwargs == {
+        "source_lang_code": "en",
+        "target_lang_code": "pt-BR",
+        "model_id": "provider/translator",
+        "api_base_url": "https://api.cerebras.ai/v1",
+        "api_key": None,
+        "api_key_env": "CEREBRAS_API_KEY",
+        "request_timeout_seconds": 120.0,
+        "message_format": "auto",
+        "max_new_tokens": 256,
+    }
+
+
+def test_build_subtitle_translator_uses_openrouter_defaults(monkeypatch) -> None:
+    captured_kwargs = _capture_openai_compatible_model_kwargs(monkeypatch)
+
+    _build_translator_for_test(backend="openrouter")
+
+    assert captured_kwargs == {
+        "source_lang_code": "en",
+        "target_lang_code": "pt-BR",
+        "model_id": "provider/translator",
+        "api_base_url": "https://openrouter.ai/api/v1",
+        "api_key": None,
+        "api_key_env": "OPENROUTER_API_KEY",
+        "request_timeout_seconds": 120.0,
+        "message_format": "auto",
+        "max_new_tokens": 256,
+    }
+
+
+def test_build_subtitle_translator_allows_overriding_known_backend_defaults(monkeypatch) -> None:
+    captured_kwargs = _capture_openai_compatible_model_kwargs(monkeypatch)
+
+    _build_translator_for_test(
+        backend="openrouter",
+        api_base_url="https://example.invalid/v1",
+        api_key_env="CUSTOM_API_KEY",
+    )
+
+    assert captured_kwargs["api_base_url"] == "https://example.invalid/v1"
+    assert captured_kwargs["api_key_env"] == "CUSTOM_API_KEY"
+
+
+def _build_translator_for_test(
+    *,
+    backend: str,
+    api_base_url: str | None = None,
+    api_key_env: str | None = None,
+) -> None:
+    from cuebridge.agent import build_subtitle_translator
+
+    build_subtitle_translator(
+        source_lang_code="en",
+        target_lang_code="pt-BR",
+        model_id="provider/translator",
+        backend=backend,
+        dtype="bfloat16",
+        device=None,
+        max_new_tokens=256,
+        batch_size=1,
+        api_base_url=api_base_url,
+        api_key_env=api_key_env,
+    )
+
+
+def _capture_openai_compatible_model_kwargs(monkeypatch) -> dict[str, object]:
+    from cuebridge import agent
+
+    captured_kwargs: dict[str, object] = {}
+
+    class FakeOpenAICompatibleModel:
+        def __init__(self, **kwargs) -> None:
+            captured_kwargs.update(kwargs)
+
+        def count_input_tokens(self, messages) -> int:
+            return len(messages)
+
+    class FakeTranslator:
+        def __init__(self, model, *, thread_id, max_input_tokens) -> None:
+            self.model = model
+            self.thread_id = thread_id
+            self.max_input_tokens = max_input_tokens
+
+    monkeypatch.setattr(agent, "OpenAICompatibleChatModel", FakeOpenAICompatibleModel)
+    monkeypatch.setattr(agent, "LangChainSubtitleTranslator", FakeTranslator)
+    return captured_kwargs
