@@ -64,6 +64,12 @@ def translate_subtitle_file(
                 translator=translator,
                 cancellation_token=cancellation_token,
             )
+            if translated_texts is None:
+                logger.info(
+                    "Discarding partially cancelled subtitle window without overwriting text"
+                )
+                break
+
             for (event, _source_text), translated_text in zip(chunk, translated_texts, strict=True):
                 translated_events += 1
                 logger.debug("Translated subtitle event {}", translated_events)
@@ -99,7 +105,7 @@ def translate_event_window(
     chunk: list[tuple[object, str]],
     translator: TextTranslator,
     cancellation_token: CancellationToken | None = None,
-) -> list[str]:
+) -> list[str] | None:
     if len(chunk) == 1:
         return [translator.translate_text(chunk[0][1], cancellation_token=cancellation_token)]
 
@@ -108,6 +114,10 @@ def translate_event_window(
     segments = _parse_window_translation(translated, expected_segments=len(chunk))
     if segments is not None:
         return segments
+
+    if cancellation_token is not None and cancellation_token.cancelled:
+        logger.debug("Skipping single-event fallback for cancelled subtitle window")
+        return None
 
     logger.debug(
         "Window translation markers did not round-trip cleanly; falling back to single-event translation"

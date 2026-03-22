@@ -105,3 +105,32 @@ How are you?
     assert result.translated_events == 1
     assert translated[0].text == "[pt-BR] Hello there!"
     assert translated[1].text == "How are you?"
+
+
+def test_translate_event_window_skips_fallback_after_cancellation() -> None:
+    class CancellingTranslator:
+        def __init__(self) -> None:
+            self.calls: list[str] = []
+
+        def translate_text(
+            self,
+            text: str,
+            cancellation_token: CancellationToken | None = None,
+        ) -> str:
+            self.calls.append(text)
+            if cancellation_token is not None:
+                cancellation_token.cancel("cancel during window translation")
+            return ""
+
+    translator = CancellingTranslator()
+    token = CancellationToken()
+    chunk = [(object(), "eins"), (object(), "zwei")]
+
+    result = translate_event_window(
+        chunk=chunk,
+        translator=translator,
+        cancellation_token=token,
+    )
+
+    assert result is None
+    assert translator.calls == [_build_window_prompt(["eins", "zwei"])]

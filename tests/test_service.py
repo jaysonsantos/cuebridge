@@ -99,7 +99,9 @@ Hello there!
     assert translated[0].text == "[pt-BR] Hello there!"
 
 
-def test_service_passes_known_backend_name_to_translator_builder(monkeypatch, tmp_path: Path) -> None:
+def test_service_passes_known_backend_name_to_translator_builder(
+    monkeypatch, tmp_path: Path
+) -> None:
     captured_kwargs: list[dict[str, object]] = []
 
     def fake_builder(**kwargs):
