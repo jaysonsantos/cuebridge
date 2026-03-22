@@ -106,6 +106,7 @@ class LangChainSubtitleTranslator:
         *,
         thread_id: str | None = None,
         max_input_tokens: int = 1800,
+        retain_history: bool = False,
     ) -> None:
         self._agent = create_agent(
             model,
@@ -118,18 +119,34 @@ class LangChainSubtitleTranslator:
             ],
             checkpointer=InMemorySaver(),
         )
-        self._config: RunnableConfig = {"configurable": {"thread_id": thread_id or str(uuid4())}}
+        self._thread_id = thread_id or str(uuid4())
+        self._retain_history = retain_history
+
+    def _request_config(self) -> RunnableConfig:
+        return {
+            "configurable": {
+                "thread_id": self._thread_id if self._retain_history else str(uuid4())
+            }
+        }
 
     def translate_text(
         self,
         text: str,
         cancellation_token: CancellationToken | None = None,
     ) -> str:
+        if cancellation_token is not None and cancellation_token.cancelled:
+            return ""
+
         translated = collect_translation_text(
             self.translate_text_stream(text, cancellation_token=cancellation_token)
         )
         if translated or (cancellation_token is not None and cancellation_token.cancelled):
             return translated
+
+        response = self._agent.invoke({"messages": text}, self._request_config())
+        message = response["messages"][-1]
+        if isinstance(message, AIMessage):
+            return _message_text(message.content)
 
         raise TypeError("Expected streamed translation output from LangChain agent")
 
@@ -141,9 +158,12 @@ class LangChainSubtitleTranslator:
         if cancellation_token is not None and cancellation_token.cancelled:
             return
 
+        if not hasattr(self._agent, "stream"):
+            return
+
         for event in self._agent.stream(
             {"messages": text},
-            self._config,
+            self._request_config(),
             stream_mode="messages",
         ):
             if cancellation_token is not None and cancellation_token.cancelled:
@@ -178,6 +198,7 @@ def build_subtitle_translator(
     message_format: str = "auto",
     max_input_tokens: int = 1800,
     thread_id: str | None = None,
+    retain_history: bool = False,
 ) -> StreamingTextTranslator:
     backend_name = backend.lower()
 
@@ -215,6 +236,7 @@ def build_subtitle_translator(
         model,
         thread_id=thread_id,
         max_input_tokens=max_input_tokens,
+        retain_history=retain_history,
     )
 
 

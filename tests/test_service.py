@@ -131,3 +131,115 @@ Hello there!
     assert captured_kwargs[0]["backend"] == "openrouter"
     assert captured_kwargs[0]["api_base_url"] is None
     assert captured_kwargs[0]["api_key_env"] is None
+
+
+def test_service_passes_retain_history_to_translator_builder(monkeypatch, tmp_path: Path) -> None:
+    captured_kwargs: list[dict[str, object]] = []
+
+    def fake_builder(**kwargs):
+        captured_kwargs.append(kwargs)
+        return FakeTranslator(kwargs["target_lang_code"])
+
+    monkeypatch.setattr(service, "build_subtitle_translator", fake_builder)
+
+    input_path = tmp_path / "movie.en.srt"
+    input_path.write_text(
+        """1
+00:00:01,000 --> 00:00:02,500
+Hello there!
+""",
+        encoding="utf-8",
+    )
+
+    service.run_subtitle_translation(
+        SubtitleTranslationRequest(
+            input_source=input_path,
+            source_lang_code="en",
+            target_lang_code="pt-BR",
+            translator_config=TranslatorConfig(model_id="fake-model", retain_history=True),
+        )
+    )
+
+    assert captured_kwargs[0]["retain_history"] is True
+
+
+def test_service_uses_auto_window_size_for_openai_compatible_backends(
+    monkeypatch, tmp_path: Path
+) -> None:
+    captured_kwargs: list[dict[str, object]] = []
+
+    def fake_builder(**kwargs):
+        return FakeTranslator(kwargs["target_lang_code"])
+
+    def fake_translate_subtitle_file(**kwargs):
+        captured_kwargs.append(kwargs)
+        return service.TranslationResult(
+            output_path=Path("/tmp/out.srt"),
+            translated_events=1,
+        )
+
+    monkeypatch.setattr(service, "build_subtitle_translator", fake_builder)
+    monkeypatch.setattr(service, "translate_subtitle_file", fake_translate_subtitle_file)
+
+    input_path = tmp_path / "movie.en.srt"
+    input_path.write_text(
+        """1
+00:00:01,000 --> 00:00:02,500
+Hello there!
+""",
+        encoding="utf-8",
+    )
+
+    service.run_subtitle_translation(
+        SubtitleTranslationRequest(
+            input_source=input_path,
+            source_lang_code="en",
+            target_lang_code="pt-BR",
+            translator_config=TranslatorConfig(model_id="fake-model", backend="openrouter"),
+        )
+    )
+
+    assert captured_kwargs[0]["window_size"] == service.DEFAULT_OPENAI_COMPATIBLE_WINDOW_SIZE
+
+
+def test_service_uses_smaller_auto_window_size_when_history_is_retained(
+    monkeypatch, tmp_path: Path
+) -> None:
+    captured_kwargs: list[dict[str, object]] = []
+
+    def fake_builder(**kwargs):
+        return FakeTranslator(kwargs["target_lang_code"])
+
+    def fake_translate_subtitle_file(**kwargs):
+        captured_kwargs.append(kwargs)
+        return service.TranslationResult(
+            output_path=Path("/tmp/out.srt"),
+            translated_events=1,
+        )
+
+    monkeypatch.setattr(service, "build_subtitle_translator", fake_builder)
+    monkeypatch.setattr(service, "translate_subtitle_file", fake_translate_subtitle_file)
+
+    input_path = tmp_path / "movie.en.srt"
+    input_path.write_text(
+        """1
+00:00:01,000 --> 00:00:02,500
+Hello there!
+""",
+        encoding="utf-8",
+    )
+
+    service.run_subtitle_translation(
+        SubtitleTranslationRequest(
+            input_source=input_path,
+            source_lang_code="en",
+            target_lang_code="pt-BR",
+            translator_config=TranslatorConfig(
+                model_id="fake-model",
+                backend="openrouter",
+                retain_history=True,
+            ),
+        )
+    )
+
+    assert captured_kwargs[0]["window_size"] == service.DEFAULT_HISTORY_WINDOW_SIZE

@@ -44,7 +44,12 @@ DEFAULT_MODEL_ID = "google/translategemma-4b-it"
 )
 @click.option("--device", default=None, help="Optional explicit device like cpu, cuda, or cuda:0.")
 @click.option("--max-new-tokens", default=256, type=click.IntRange(min=1))
-@click.option("--batch-size", default=1, type=click.IntRange(min=1))
+@click.option(
+    "--batch-size",
+    default=1,
+    type=click.IntRange(min=1),
+    help="Batch size for the hf-local backend. OpenAI-compatible backends ignore this.",
+)
 @click.option(
     "--api-base-url",
     default=None,
@@ -65,9 +70,9 @@ DEFAULT_MODEL_ID = "google/translategemma-4b-it"
 @click.option("--request-timeout-seconds", default=120.0, type=float)
 @click.option(
     "--window-size",
-    default=4,
+    default=None,
     type=click.IntRange(min=1),
-    help="Number of subtitle events to translate together with segment markers.",
+    help="Optional subtitle window size. Defaults to an auto-tuned value for the selected backend.",
 )
 @click.option(
     "--flush-every-chunks",
@@ -79,9 +84,14 @@ DEFAULT_MODEL_ID = "google/translategemma-4b-it"
     "--max-input-tokens",
     default=1800,
     type=click.IntRange(min=128),
-    help="Token budget for history retained before each translation turn.",
+    help="Token budget for retained chat history when --retain-history is enabled.",
 )
 @click.option("--thread-id", default=None, help="Optional LangGraph checkpoint thread id.")
+@click.option(
+    "--retain-history",
+    is_flag=True,
+    help="Reuse prior translation turns as chat history across subtitle chunks.",
+)
 @click.option("--verbose", is_flag=True, help="Enable debug logging.")
 def main(
     input_path: Path,
@@ -99,10 +109,11 @@ def main(
     api_key: str | None,
     api_key_env: str | None,
     request_timeout_seconds: float,
-    window_size: int,
+    window_size: int | None,
     flush_every_chunks: int,
     max_input_tokens: int,
     thread_id: str | None,
+    retain_history: bool,
     verbose: bool,
 ) -> None:
     """Translate a subtitle file with TranslateGemma."""
@@ -129,6 +140,7 @@ def main(
                 request_timeout_seconds=request_timeout_seconds,
                 max_input_tokens=max_input_tokens,
                 thread_id=thread_id,
+                retain_history=retain_history,
             ),
             runtime_options=RuntimeOptions(
                 window_size=window_size,

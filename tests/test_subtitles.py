@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import pysubs2
+
 from cuebridge.cancellation import CancellationToken
 from cuebridge.subtitles import (
     _build_window_prompt,
@@ -21,6 +22,27 @@ class FakeTranslator:
         del cancellation_token
         self.calls.append(text)
         return self.responses.pop(0)
+
+
+class AdaptiveFakeTranslator:
+    def __init__(self, *, max_marker_window: int) -> None:
+        self.max_marker_window = max_marker_window
+        self.window_calls: list[int] = []
+
+    def translate_text(self, text: str, cancellation_token: CancellationToken | None = None) -> str:
+        del cancellation_token
+        marker_count = text.count("[[SEG_")
+        if marker_count == 0:
+            return f"[pt-BR] {text}"
+
+        self.window_calls.append(marker_count)
+        if marker_count > self.max_marker_window:
+            return "broken translation without markers"
+
+        parts: list[str] = []
+        for idx in range(1, marker_count + 1):
+            parts.append(f"[[SEG_{idx}]][pt-BR] segment {idx}")
+        return "\n".join(parts)
 
 
 def test_parse_window_translation_splits_segments() -> None:
@@ -45,6 +67,24 @@ def test_translate_event_window_falls_back_when_markers_are_missing() -> None:
 
     assert result == ["one", "two"]
     assert translator.calls[0] == _build_window_prompt(["eins", "zwei"])
+
+
+def test_translate_event_window_recursively_splits_large_broken_windows() -> None:
+    translator = FakeTranslator(
+        [
+            "broken translation without markers",
+            "[[SEG_1]]one\n[[SEG_2]]two",
+            "[[SEG_1]]three\n[[SEG_2]]four",
+        ]
+    )
+    chunk = [(object(), "eins"), (object(), "zwei"), (object(), "drei"), (object(), "vier")]
+
+    result = translate_event_window(chunk=chunk, translator=translator)
+
+    assert result == ["one", "two", "three", "four"]
+    assert translator.calls[0] == _build_window_prompt(["eins", "zwei", "drei", "vier"])
+    assert translator.calls[1] == _build_window_prompt(["eins", "zwei"])
+    assert translator.calls[2] == _build_window_prompt(["drei", "vier"])
 
 
 def test_translate_event_window_uses_marked_segments() -> None:
@@ -134,3 +174,33 @@ def test_translate_event_window_skips_fallback_after_cancellation() -> None:
 
     assert result is None
     assert translator.calls == [_build_window_prompt(["eins", "zwei"])]
+
+
+def test_translate_subtitle_file_reduces_future_window_size_after_repeated_failures(
+    tmp_path: Path,
+) -> None:
+    input_path = tmp_path / "movie.en.srt"
+    subtitle_lines = []
+    for idx in range(1, 19):
+        subtitle_lines.append(
+            f"""{idx}
+00:00:{idx:02d},000 --> 00:00:{idx:02d},500
+Line {idx}
+"""
+        )
+    input_path.write_text("\n".join(subtitle_lines), encoding="utf-8")
+
+    translator = AdaptiveFakeTranslator(max_marker_window=3)
+    result = translate_subtitle_file(
+        input_path=input_path,
+        target_lang_code="pt-BR",
+        translator=translator,
+        window_size=6,
+        output_path=tmp_path / "out.pt-BR.srt",
+    )
+
+    assert result.translated_events == 18
+    assert translator.window_calls == [6, 3, 3, 6, 3, 3, 3, 3]
+
+    translated = pysubs2.load(str(result.output_path))
+    assert translated[0].text == "[pt-BR] segment 1"
