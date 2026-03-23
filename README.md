@@ -27,6 +27,42 @@ just test
 just all
 ```
 
+## Citation
+
+CueBridge can be used with Google's TranslateGemma model family. For attribution and scholarly citation, cite the TranslateGemma technical report rather than only the model access page.
+
+- Model access and license acceptance: <https://huggingface.co/google/translategemma-4b-it>
+- Technical report: <https://arxiv.org/pdf/2601.09012>
+
+```bibtex
+@article{gemmatranslate2026,
+    title={{TranslateGemma Technical Report}},
+    url={https://arxiv.org/pdf/2601.09012},
+    publisher={Google DeepMind},
+    author={{Google Translate Research Team} and
+    Finkelstein, Mara and
+    Caswell, Isaac and
+    Domhan, Tobias and
+    Peter, Jan-Thorsten and
+    Juraska, Juraj and
+    Riley, Parker and
+    Deutsch, Daniel and
+    Dilanni, Cole and
+    Cherry, Colin and
+    Briakou, Eleftheria and
+    Nielsen, Elizabeth and
+    Luo, Jiaming and
+    Agrawal, Sweta and
+    Xu, Wenda and
+    Kats, Erin and
+    Jaskiewicz, Stephane and
+    Freitag, Markus and
+    Vilar, David
+},
+    year={2026}
+}
+```
+
 ## Nix
 
 Build the installable package:
