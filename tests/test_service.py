@@ -164,9 +164,7 @@ Hello there!
     assert captured_kwargs[0]["retain_history"] is True
 
 
-def test_service_passes_reasoning_effort_to_translator_builder(
-    monkeypatch, tmp_path: Path
-) -> None:
+def test_service_passes_reasoning_effort_to_translator_builder(monkeypatch, tmp_path: Path) -> None:
     captured_kwargs: list[dict[str, object]] = []
 
     def fake_builder(**kwargs):
@@ -316,7 +314,9 @@ Hello there!
 
     monkeypatch.setattr(service, "build_subtitle_translator", fake_builder)
     monkeypatch.setattr(service, "probe_subtitle_streams", fake_probe_subtitle_streams)
-    monkeypatch.setattr(service, "extract_text_subtitle_stream_to_srt", fake_extract_text_subtitle_stream_to_srt)
+    monkeypatch.setattr(
+        service, "extract_text_subtitle_stream_to_srt", fake_extract_text_subtitle_stream_to_srt
+    )
     monkeypatch.setattr(service, "translate_subtitle_file", fake_translate_subtitle_file)
 
     input_path = tmp_path / "episode.en.mkv"
