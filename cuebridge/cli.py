@@ -71,6 +71,12 @@ TRACER = trace.get_tracer(__name__)
 )
 @click.option("--request-timeout-seconds", default=120.0, type=float)
 @click.option(
+    "--reasoning-effort",
+    default=None,
+    type=click.Choice(["none", "low", "medium", "high"], case_sensitive=False),
+    help="Optional reasoning level for OpenAI-compatible backends that support thinking control.",
+)
+@click.option(
     "--window-size",
     default=None,
     type=click.IntRange(min=1),
@@ -128,6 +134,7 @@ def main(
     api_key: str | None,
     api_key_env: str | None,
     request_timeout_seconds: float,
+    reasoning_effort: str | None,
     window_size: int | None,
     flush_every_chunks: int,
     subtitle_stream: int | None,
@@ -158,6 +165,7 @@ def main(
             api_key=api_key,
             api_key_env=api_key_env,
             request_timeout_seconds=request_timeout_seconds,
+            reasoning_effort=reasoning_effort,
             max_input_tokens=max_input_tokens,
             thread_id=thread_id,
             retain_history=retain_history,

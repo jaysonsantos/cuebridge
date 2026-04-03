@@ -126,6 +126,33 @@ def test_cli_can_enable_retained_history(monkeypatch, subtitle_samples) -> None:
     assert requests[0].translator_config.retain_history is True
 
 
+def test_cli_accepts_reasoning_effort(monkeypatch, subtitle_samples) -> None:
+    requests: list[SubtitleTranslationRequest] = []
+
+    def fake_service(request: SubtitleTranslationRequest) -> TranslationResult:
+        requests.append(request)
+        return TranslationResult(output_path=Path("/tmp/out.srt"), translated_events=1)
+
+    monkeypatch.setattr(cli, "run_subtitle_translation", fake_service)
+    runner = CliRunner()
+
+    result = runner.invoke(
+        cli.main,
+        [
+            subtitle_samples[0].filename,
+            "--source-lang",
+            "en",
+            "--target-lang",
+            "pt-BR",
+            "--reasoning-effort",
+            "none",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert requests[0].translator_config.reasoning_effort == "none"
+
+
 def test_cli_accepts_video_processing_options(monkeypatch, subtitle_samples) -> None:
     requests: list[SubtitleTranslationRequest] = []
 

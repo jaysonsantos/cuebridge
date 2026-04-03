@@ -195,6 +195,8 @@ def test_langchain_subtitle_translator_reuses_thread_when_history_is_retained(mo
 
 
 class FakeResponse:
+    status_code = 200
+
     def raise_for_status(self):
         return None
 
@@ -266,6 +268,28 @@ def test_openai_compatible_model_formats_chat_completions_request() -> None:
     assert streamed[0].message.chunk_position == "last"
 
 
+def test_openai_compatible_model_includes_reasoning_effort_when_requested() -> None:
+    captured_calls: list[dict] = []
+
+    def fake_request_sender(url, **kwargs):
+        captured_calls.append({"url": url, **kwargs})
+        return FakeResponse()
+
+    model = OpenAICompatibleChatModel(
+        source_lang_code="en",
+        target_lang_code="pt-BR",
+        model_id="gemma4:latest",
+        api_base_url="http://localhost:11434/v1",
+        reasoning_effort="none",
+        request_sender=fake_request_sender,
+    )
+
+    result = model._generate([HumanMessage(content="Hello world")])
+
+    assert result.generations[0].message.content == "ola mundo"
+    assert captured_calls[0]["json"]["reasoning_effort"] == "none"
+
+
 def test_build_subtitle_translator_uses_cerebras_defaults(monkeypatch) -> None:
     captured_kwargs = _capture_openai_compatible_model_kwargs(monkeypatch)
 
@@ -279,6 +303,7 @@ def test_build_subtitle_translator_uses_cerebras_defaults(monkeypatch) -> None:
         "api_key": None,
         "api_key_env": "CEREBRAS_API_KEY",
         "request_timeout_seconds": 120.0,
+        "reasoning_effort": None,
         "message_format": "auto",
         "max_new_tokens": 256,
     }
@@ -297,6 +322,7 @@ def test_build_subtitle_translator_uses_openrouter_defaults(monkeypatch) -> None
         "api_key": None,
         "api_key_env": "OPENROUTER_API_KEY",
         "request_timeout_seconds": 120.0,
+        "reasoning_effort": None,
         "message_format": "auto",
         "max_new_tokens": 256,
     }
@@ -315,11 +341,23 @@ def test_build_subtitle_translator_allows_overriding_known_backend_defaults(monk
     assert captured_kwargs["api_key_env"] == "CUSTOM_API_KEY"
 
 
+def test_build_subtitle_translator_passes_reasoning_effort(monkeypatch) -> None:
+    captured_kwargs = _capture_openai_compatible_model_kwargs(monkeypatch)
+
+    _build_translator_for_test(
+        backend="openrouter",
+        reasoning_effort="none",
+    )
+
+    assert captured_kwargs["reasoning_effort"] == "none"
+
+
 def _build_translator_for_test(
     *,
     backend: str,
     api_base_url: str | None = None,
     api_key_env: str | None = None,
+    reasoning_effort: str | None = None,
 ) -> None:
     from cuebridge.agent import build_subtitle_translator
 
@@ -334,6 +372,7 @@ def _build_translator_for_test(
         batch_size=1,
         api_base_url=api_base_url,
         api_key_env=api_key_env,
+        reasoning_effort=reasoning_effort,
     )
 
 

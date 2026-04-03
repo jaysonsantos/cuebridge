@@ -217,6 +217,7 @@ def build_subtitle_translator(
     api_key: str | None = None,
     api_key_env: str | None = None,
     request_timeout_seconds: float = 120.0,
+    reasoning_effort: str | None = None,
     message_format: str = "auto",
     max_input_tokens: int = 1800,
     thread_id: str | None = None,
@@ -248,6 +249,7 @@ def build_subtitle_translator(
             api_key=api_key,
             api_key_env=resolved_backend["api_key_env"],
             request_timeout_seconds=request_timeout_seconds,
+            reasoning_effort=reasoning_effort,
             message_format=message_format,
             max_new_tokens=max_new_tokens,
         )

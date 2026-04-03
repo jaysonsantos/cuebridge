@@ -220,6 +220,7 @@ class OpenAICompatibleChatModel(BaseChatModel):
     api_key: str | None = None
     api_key_env: str = "OPENAI_API_KEY"
     request_timeout_seconds: float = 120.0
+    reasoning_effort: str | None = None
     max_new_tokens: int = 256
     message_format: str = "auto"
     request_sender: RequestSender | None = Field(default=None, exclude=True, repr=False)
@@ -240,6 +241,7 @@ class OpenAICompatibleChatModel(BaseChatModel):
             "source_lang_code": self.source_lang_code,
             "target_lang_code": self.target_lang_code,
             "max_new_tokens": self.max_new_tokens,
+            "reasoning_effort": self.reasoning_effort,
             "message_format": self.message_format,
         }
 
@@ -324,6 +326,8 @@ class OpenAICompatibleChatModel(BaseChatModel):
                 "temperature": 0,
                 "max_tokens": self.max_new_tokens,
             }
+            if self.reasoning_effort is not None:
+                payload["reasoning_effort"] = self.reasoning_effort
             headers = {"Content-Type": "application/json"}
             api_key = self._resolved_api_key()
             if api_key:
@@ -339,6 +343,8 @@ class OpenAICompatibleChatModel(BaseChatModel):
             span.set_attribute("cuebridge.max_new_tokens", self.max_new_tokens)
             span.set_attribute("cuebridge.timeout_seconds", self.request_timeout_seconds)
             span.set_attribute("cuebridge.message_format", self._resolved_message_format())
+            if self.reasoning_effort is not None:
+                span.set_attribute("cuebridge.reasoning_effort", self.reasoning_effort)
 
             response = self._request_sender()(
                 url,

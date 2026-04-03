@@ -8,6 +8,24 @@
 | `openai/gpt-5.4-nano` | OpenRouter | Viable | Correct output, but slower than LFM and weaker on the same slice |
 | `qwen/qwen3.5-35b-a3b` | LM Studio | Not viable | Too slow for this workload and did not reliably return final subtitle text |
 
+## Known Models
+
+This benchmark file is intentionally narrow, but a few additional model/runtime combinations are known to be useful:
+
+| Model | Runtime | Status | Notes |
+| --- | --- | --- | --- |
+| `google/translategemma-4b-it` | Hugging Face local | Stable default | Project default for the native `hf-local` backend |
+| `mlx-community/translategemma-4b-it-4bit` | LM Studio | Known-good | Useful when you want TranslateGemma through an OpenAI-compatible server |
+| `gemma4:latest` | Ollama | Usable with tuning | Better after disabling reasoning and lowering output token caps |
+| `gemma4:e2b` | Ollama | Faster tradeoff | Smaller Gemma 4 option for throughput-first runs |
+
+For the Ollama `gemma4` path, start with:
+
+- `--reasoning-effort none`
+- `--window-size 16`
+- `--max-new-tokens 512` to `768`
+- no `--retain-history` unless quality clearly improves enough to justify the slowdown
+
 ```mermaid
 flowchart LR
   LFM["liquid/lfm2.5-1.2b<br/>Recommended"]

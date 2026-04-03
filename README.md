@@ -121,6 +121,21 @@ Text subtitle streams are extracted with `ffmpeg` and then translated through th
 
 If bitmap OCR needs a specific Tesseract language pack, pass `--ocr-language` explicitly, for example `--ocr-language eng` or `--ocr-language deu`.
 
+## Known Models
+
+These are the model setups currently known to work well enough to be worth trying:
+
+| Model | Backend | Status | Notes |
+| --- | --- | --- | --- |
+| `google/translategemma-4b-it` | `hf-local` | Stable default | Best fit when you want the project default and can run the Hugging Face model locally |
+| `mlx-community/translategemma-4b-it-4bit` | OpenAI-compatible | Known-good | Good fit for LM Studio or other OpenAI-compatible local runtimes |
+| `liquid/lfm2.5-1.2b` | OpenAI-compatible | Fastest benchmarked local model | Current recommendation in [`docs/models-benchmark.md`](docs/models-benchmark.md) |
+| `openai/gpt-5.4-nano` | OpenRouter | Viable hosted option | Correct output, but slower than the best local benchmark |
+| `gemma4:latest` | Ollama via OpenAI-compatible | Usable with tuning | Works, but needs extra speed tuning because it is a thinking-capable general model |
+| `gemma4:e2b` | Ollama via OpenAI-compatible | Faster tradeoff | Smaller Gemma 4 variant if you want more speed and can accept some quality risk |
+
+If you are unsure where to start, use `google/translategemma-4b-it` with `hf-local`, or `liquid/lfm2.5-1.2b` on an OpenAI-compatible local server when throughput matters more.
+
 ### LM Studio / OpenAI-Compatible
 
 You can also target an OpenAI-compatible `/v1/chat/completions` server such as LM Studio:
@@ -134,6 +149,8 @@ uv run cuebridge subtitles/movie.de.srt \
   --target-lang pt-BR
 ```
 
+CueBridge also supports an optional `--reasoning-effort` flag for OpenAI-compatible backends that expose thinking control. Accepted values are `none`, `low`, `medium`, and `high`.
+
 For OpenRouter or similar services, point `--api-base-url` at the provider and either export an API key in `OPENAI_API_KEY` or pass `--api-key` directly:
 
 ```bash
@@ -145,6 +162,39 @@ uv run cuebridge subtitles/movie.de.srt \
   --source-lang de \
   --target-lang pt-BR
 ```
+
+### Ollama / Gemma 4
+
+Ollama's `gemma4` models work through the same OpenAI-compatible path. They are usable for subtitle translation, but the speed profile is different from TranslateGemma or smaller non-thinking models.
+
+- `gemma4:latest` is a thinking-capable general model, so the default behavior can spend tokens on reasoning that do not help subtitle translation.
+- `--reasoning-effort none` is the first knob to try when you want better throughput.
+- `--retain-history` usually hurts speed here because it shrinks the auto window size and adds extra prompt baggage across requests.
+- `--max-new-tokens 4096` is usually much higher than needed for subtitle windows. Start closer to `512` or `768`.
+- `--flush-every-chunks` mainly changes output file rewrite frequency. It is worth increasing for less I/O, but it is a smaller win than windowing or reasoning control.
+- If you want an even faster Gemma 4 tradeoff, try `gemma4:e2b` instead of `gemma4:latest`.
+
+Recommended starting point for Ollama:
+
+```bash
+uv run cuebridge "/path/to/episode.mkv" \
+  --source-lang en \
+  --target-lang pt-BR \
+  --backend openai-compatible \
+  --api-base-url http://localhost:11434/v1 \
+  --model-id gemma4:latest \
+  --reasoning-effort none \
+  --window-size 16 \
+  --flush-every-chunks 25 \
+  --max-new-tokens 768
+```
+
+If the model still feels slow, make changes in this order:
+
+1. Remove `--retain-history` if you enabled it.
+2. Lower `--max-new-tokens`.
+3. Raise `--window-size` modestly, for example from `12` to `16`.
+4. Try `gemma4:e2b`.
 
 You can also run it as a module:
 

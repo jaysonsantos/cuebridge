@@ -43,6 +43,7 @@ class TranslatorConfig:
     max_input_tokens: int = 1800
     thread_id: str | None = None
     retain_history: bool = False
+    reasoning_effort: str | None = None
 
 
 @dataclass(frozen=True)
@@ -79,6 +80,7 @@ def run_subtitle_translation(request: SubtitleTranslationRequest) -> Translation
         api_key=request.translator_config.api_key,
         api_key_env=request.translator_config.api_key_env,
         request_timeout_seconds=request.translator_config.request_timeout_seconds,
+        reasoning_effort=request.translator_config.reasoning_effort,
         max_input_tokens=request.translator_config.max_input_tokens,
         thread_id=request.translator_config.thread_id,
         retain_history=request.translator_config.retain_history,
