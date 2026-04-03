@@ -81,6 +81,23 @@ DEFAULT_MODEL_ID = "google/translategemma-4b-it"
     help="How many translated chunks to process before rewriting the output .srt.",
 )
 @click.option(
+    "--subtitle-stream",
+    default=None,
+    type=click.IntRange(min=0),
+    help=(
+        "Optional 0-based subtitle stream index for video inputs. "
+        "When omitted, CueBridge chooses a stream from the source language."
+    ),
+)
+@click.option(
+    "--ocr-language",
+    default=None,
+    help=(
+        "Optional Tesseract language code for bitmap subtitle OCR, for example eng or deu. "
+        "Only used when the selected subtitle stream is image-based."
+    ),
+)
+@click.option(
     "--max-input-tokens",
     default=1800,
     type=click.IntRange(min=128),
@@ -111,12 +128,14 @@ def main(
     request_timeout_seconds: float,
     window_size: int | None,
     flush_every_chunks: int,
+    subtitle_stream: int | None,
+    ocr_language: str | None,
     max_input_tokens: int,
     thread_id: str | None,
     retain_history: bool,
     verbose: bool,
 ) -> None:
-    """Translate a subtitle file with TranslateGemma."""
+    """Translate subtitles from subtitle files or supported video containers."""
     load_dotenv()
     configure_logging(verbose=verbose)
 
@@ -145,6 +164,8 @@ def main(
             runtime_options=RuntimeOptions(
                 window_size=window_size,
                 flush_every_chunks=flush_every_chunks,
+                subtitle_stream=subtitle_stream,
+                ocr_language=ocr_language,
             ),
         )
     )

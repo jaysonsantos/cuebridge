@@ -9,6 +9,14 @@ from typing import BinaryIO, TextIO
 
 from cuebridge.agent import build_subtitle_translator
 from cuebridge.cancellation import CancellationToken
+from cuebridge.media import (
+    extract_bitmap_subtitle_stream_to_srt,
+    extract_text_subtitle_stream_to_srt,
+    is_bitmap_subtitle_codec,
+    is_subtitle_file_path,
+    probe_subtitle_streams,
+    select_subtitle_stream,
+)
 from cuebridge.naming import build_output_path
 from cuebridge.subtitles import TranslationResult, translate_subtitle_file
 
@@ -41,6 +49,8 @@ class TranslatorConfig:
 class RuntimeOptions:
     window_size: int | None = None
     flush_every_chunks: int = 1
+    subtitle_stream: int | None = None
+    ocr_language: str | None = None
 
 
 @dataclass(frozen=True)
@@ -94,10 +104,38 @@ def run_subtitle_translation(request: SubtitleTranslationRequest) -> Translation
 @contextmanager
 def _resolved_input_path(request: SubtitleTranslationRequest) -> Iterator[Path]:
     if isinstance(request.input_source, Path | str):
-        yield Path(request.input_source)
-        return
+        input_path = Path(request.input_source)
+        if is_subtitle_file_path(input_path):
+            yield input_path
+            return
+
+        with tempfile.TemporaryDirectory(prefix="cuebridge-video-subtitles-") as tmp_dir:
+            extracted_path = Path(tmp_dir) / f"{input_path.stem}.source.srt"
+            selected_stream = select_subtitle_stream(
+                streams=probe_subtitle_streams(input_path),
+                source_lang_code=request.source_lang_code,
+                preferred_stream_index=request.runtime_options.subtitle_stream,
+            )
+            if is_bitmap_subtitle_codec(selected_stream.codec_name):
+                extract_bitmap_subtitle_stream_to_srt(
+                    input_path=input_path,
+                    stream=selected_stream,
+                    output_path=extracted_path,
+                    source_lang_code=request.source_lang_code,
+                    ocr_language=request.runtime_options.ocr_language,
+                )
+            else:
+                extract_text_subtitle_stream_to_srt(
+                    input_path=input_path,
+                    stream=selected_stream,
+                    output_path=extracted_path,
+                )
+            yield extracted_path
+            return
 
     filename = _input_filename(request.input_source)
+    if not is_subtitle_file_path(Path(filename)):
+        raise ValueError("Video input must be provided as a filesystem path")
     content = request.input_source.read()
     if isinstance(content, bytes):
         text = content.decode("utf-8")
@@ -122,13 +160,21 @@ def _resolve_output_path(
         return output_path
 
     if isinstance(input_source, Path | str):
-        return None
+        input_path = Path(input_source)
+        if is_subtitle_file_path(input_path):
+            return None
+
+        return build_output_path(input_path.with_suffix(".srt"), target_lang_code)
 
     source_name = getattr(input_source, "name", None)
     if not source_name:
         raise ValueError("output_path is required when input_source is file-like without a name")
 
-    return build_output_path(Path(source_name), target_lang_code)
+    source_path = Path(source_name)
+    if is_subtitle_file_path(source_path):
+        return build_output_path(source_path, target_lang_code)
+
+    return build_output_path(source_path.with_suffix(".srt"), target_lang_code)
 
 
 def _input_filename(input_source: TextIO | BinaryIO) -> str:

@@ -7,6 +7,7 @@ from pathlib import Path
 import pysubs2
 from cuebridge import service
 from cuebridge.cancellation import CancellationToken
+from cuebridge.media import SubtitleStreamInfo
 from cuebridge.service import RuntimeOptions, SubtitleTranslationRequest, TranslatorConfig
 
 SEGMENT_MARKER_RE = re.compile(r"(\[\[SEG_\d+]])")
@@ -243,3 +244,61 @@ Hello there!
     )
 
     assert captured_kwargs[0]["window_size"] == service.DEFAULT_HISTORY_WINDOW_SIZE
+
+
+def test_service_defaults_video_output_to_srt_path(monkeypatch, tmp_path: Path) -> None:
+    captured_kwargs: list[dict[str, object]] = []
+
+    def fake_builder(**kwargs):
+        return FakeTranslator(kwargs["target_lang_code"])
+
+    def fake_probe_subtitle_streams(_input_path: Path) -> list[SubtitleStreamInfo]:
+        return [
+            SubtitleStreamInfo(
+                relative_index=0,
+                stream_index=3,
+                codec_name="subrip",
+                language="eng",
+                title=None,
+                is_default=True,
+                duration_seconds=120.0,
+            )
+        ]
+
+    def fake_extract_text_subtitle_stream_to_srt(*, output_path: Path, **kwargs) -> None:
+        del kwargs
+        output_path.write_text(
+            """1
+00:00:01,000 --> 00:00:02,500
+Hello there!
+""",
+            encoding="utf-8",
+        )
+
+    def fake_translate_subtitle_file(**kwargs):
+        captured_kwargs.append(kwargs)
+        return service.TranslationResult(
+            output_path=kwargs["output_path"],
+            translated_events=1,
+        )
+
+    monkeypatch.setattr(service, "build_subtitle_translator", fake_builder)
+    monkeypatch.setattr(service, "probe_subtitle_streams", fake_probe_subtitle_streams)
+    monkeypatch.setattr(service, "extract_text_subtitle_stream_to_srt", fake_extract_text_subtitle_stream_to_srt)
+    monkeypatch.setattr(service, "translate_subtitle_file", fake_translate_subtitle_file)
+
+    input_path = tmp_path / "episode.en.mkv"
+    input_path.write_bytes(b"fake video payload")
+
+    result = service.run_subtitle_translation(
+        SubtitleTranslationRequest(
+            input_source=input_path,
+            source_lang_code="en",
+            target_lang_code="pt-BR",
+            translator_config=TranslatorConfig(model_id="fake-model"),
+        )
+    )
+
+    assert result.output_path == tmp_path / "episode.pt-BR.srt"
+    assert captured_kwargs[0]["output_path"] == tmp_path / "episode.pt-BR.srt"
+    assert Path(captured_kwargs[0]["input_path"]).suffix == ".srt"

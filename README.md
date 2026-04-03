@@ -99,6 +99,14 @@ uv run cuebridge subtitles/movie.de.srt \
   --target-lang pt-BR
 ```
 
+Video containers with embedded subtitle tracks work too:
+
+```bash
+uv run cuebridge "/path/to/S01E03 - Second of His Name.mkv" \
+  --source-lang en \
+  --target-lang pt-BR
+```
+
 The default translation mode groups `4` subtitle events per request to give TranslateGemma more local context. Set `--window-size 1` if you want strict per-cue translation.
 
 The output `.srt` is rewritten after each translated chunk by default, so you can watch progress in the final destination file while the job is still running. Use `--flush-every-chunks` to change that cadence.
@@ -106,6 +114,12 @@ The output `.srt` is rewritten after each translated chunk by default, so you ca
 Internally, translators now expose both a one-shot `translate_text(...)` path and a streaming `translate_text_stream(...)` path. Streaming yields append-only translation fragments in order; backends that cannot truly stream yet bridge by yielding a single final chunk.
 
 Cancellation is cooperative and best-effort rather than immediate. CueBridge checks for cancellation before starting the next subtitle window and between emitted translation chunks, but an in-flight backend request may still complete. That means partial stream output may already have been yielded, and completed subtitle windows may already have been flushed to disk, by the time cancellation is observed.
+
+For video inputs, CueBridge probes subtitle streams with `ffprobe` and picks the stream that best matches `--source-lang`. Pass `--subtitle-stream` if you want a specific 0-based subtitle stream instead.
+
+Text subtitle streams are extracted with `ffmpeg` and then translated through the normal `.srt` pipeline. Bitmap subtitle streams such as PGS, VobSub, or DVB subtitles are OCRed into a temporary `.srt` first. That bitmap path only requires `tesseract` when you actually select an image-based subtitle stream, so plain `.srt` files and text subtitle streams do not need it installed.
+
+If bitmap OCR needs a specific Tesseract language pack, pass `--ocr-language` explicitly, for example `--ocr-language eng` or `--ocr-language deu`.
 
 ### LM Studio / OpenAI-Compatible
 
