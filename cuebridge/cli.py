@@ -6,6 +6,7 @@ from pathlib import Path
 import click
 from dotenv import load_dotenv
 from loguru import logger
+from opentelemetry import trace
 
 from cuebridge.service import (
     RuntimeOptions,
@@ -15,6 +16,7 @@ from cuebridge.service import (
 )
 
 DEFAULT_MODEL_ID = "google/translategemma-4b-it"
+TRACER = trace.get_tracer(__name__)
 
 
 @click.command(context_settings={"show_default": True})
@@ -139,36 +141,48 @@ def main(
     load_dotenv()
     configure_logging(verbose=verbose)
 
-    result = run_subtitle_translation(
-        SubtitleTranslationRequest(
-            input_source=input_path,
-            source_lang_code=source_lang,
-            target_lang_code=target_lang,
-            output_path=output_path,
-            translator_config=TranslatorConfig(
-                backend=backend,
-                model_id=model_id,
-                dtype=dtype,
-                device=device,
-                max_new_tokens=max_new_tokens,
-                batch_size=batch_size,
-                api_base_url=api_base_url,
-                message_format=message_format,
-                api_key=api_key,
-                api_key_env=api_key_env,
-                request_timeout_seconds=request_timeout_seconds,
-                max_input_tokens=max_input_tokens,
-                thread_id=thread_id,
-                retain_history=retain_history,
-            ),
-            runtime_options=RuntimeOptions(
-                window_size=window_size,
-                flush_every_chunks=flush_every_chunks,
-                subtitle_stream=subtitle_stream,
-                ocr_language=ocr_language,
-            ),
-        )
+    request = SubtitleTranslationRequest(
+        input_source=input_path,
+        source_lang_code=source_lang,
+        target_lang_code=target_lang,
+        output_path=output_path,
+        translator_config=TranslatorConfig(
+            backend=backend,
+            model_id=model_id,
+            dtype=dtype,
+            device=device,
+            max_new_tokens=max_new_tokens,
+            batch_size=batch_size,
+            api_base_url=api_base_url,
+            message_format=message_format,
+            api_key=api_key,
+            api_key_env=api_key_env,
+            request_timeout_seconds=request_timeout_seconds,
+            max_input_tokens=max_input_tokens,
+            thread_id=thread_id,
+            retain_history=retain_history,
+        ),
+        runtime_options=RuntimeOptions(
+            window_size=window_size,
+            flush_every_chunks=flush_every_chunks,
+            subtitle_stream=subtitle_stream,
+            ocr_language=ocr_language,
+        ),
     )
+    with TRACER.start_as_current_span("cuebridge.cli.translate_subtitles") as span:
+        span.set_attribute("cuebridge.backend", backend)
+        span.set_attribute("cuebridge.input.path", str(input_path))
+        span.set_attribute("cuebridge.source_language", source_lang)
+        span.set_attribute("cuebridge.target_language", target_lang)
+        span.set_attribute("cuebridge.retain_history", retain_history)
+        if output_path is not None:
+            span.set_attribute("cuebridge.output.path", str(output_path))
+        if window_size is not None:
+            span.set_attribute("cuebridge.window_size", window_size)
+        if subtitle_stream is not None:
+            span.set_attribute("cuebridge.subtitle_stream", subtitle_stream)
+        result = run_subtitle_translation(request)
+        span.set_attribute("cuebridge.output.path", str(result.output_path))
 
     click.echo(str(result.output_path))
 

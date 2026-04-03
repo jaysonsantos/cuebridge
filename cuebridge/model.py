@@ -3,18 +3,21 @@ from __future__ import annotations
 import os
 from collections.abc import Iterator
 from typing import Any, Callable
+from urllib.parse import urlparse
 
 import requests
 import torch
 from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.messages import AIMessage, AIMessageChunk, BaseMessage, HumanMessage
 from langchain_core.outputs import ChatGeneration, ChatGenerationChunk, ChatResult
+from opentelemetry import trace
 from pydantic import ConfigDict, Field, PrivateAttr
 from transformers import AutoModelForImageTextToText, AutoProcessor
 
 ModelLoader = Callable[..., Any]
 ProcessorLoader = Callable[..., Any]
 RequestSender = Callable[..., Any]
+TRACER = trace.get_tracer(__name__)
 
 
 class TranslateGemmaChatModel(BaseChatModel):
@@ -127,25 +130,34 @@ class TranslateGemmaChatModel(BaseChatModel):
         )
 
     def _generate_translated_text(self, messages: list[BaseMessage]) -> str:
-        inputs = self._tokenize_messages(messages).to(self._model_device())
-        input_len = inputs["input_ids"].shape[1]
+        with TRACER.start_as_current_span("cuebridge.model.translategemma.generate") as span:
+            inputs = self._tokenize_messages(messages).to(self._model_device())
+            input_len = int(inputs["input_ids"].shape[1])
+            span.set_attribute("cuebridge.model_id", self.model_id)
+            span.set_attribute("cuebridge.input_messages", len(messages))
+            span.set_attribute("cuebridge.input_tokens", input_len)
+            span.set_attribute("cuebridge.max_new_tokens", self.max_new_tokens)
+            if self.device is not None:
+                span.set_attribute("cuebridge.device", self.device)
 
-        with torch.inference_mode():
-            generation = self._get_model().generate(
-                **inputs,
-                do_sample=False,
-                max_new_tokens=self.max_new_tokens,
-                pad_token_id=self._get_tokenizer().eos_token_id,
-            )
+            with torch.inference_mode():
+                generation = self._get_model().generate(
+                    **inputs,
+                    do_sample=False,
+                    max_new_tokens=self.max_new_tokens,
+                    pad_token_id=self._get_tokenizer().eos_token_id,
+                )
 
-        return (
-            self._get_tokenizer()
-            .decode(
-                generation[0][input_len:],
-                skip_special_tokens=True,
+            translated = (
+                self._get_tokenizer()
+                .decode(
+                    generation[0][input_len:],
+                    skip_special_tokens=True,
+                )
+                .strip()
             )
-            .strip()
-        )
+            span.set_attribute("cuebridge.output_length", len(translated))
+            return translated
 
     def _format_message(self, message: BaseMessage) -> dict[str, Any]:
         text = _message_to_text(message.content)
@@ -305,32 +317,47 @@ class OpenAICompatibleChatModel(BaseChatModel):
         return f"{self.api_base_url.rstrip('/')}/chat/completions"
 
     def _generate_translated_text(self, messages: list[BaseMessage]) -> str:
-        payload = {
-            "model": self.model_id,
-            "messages": [self._format_message(message) for message in messages],
-            "temperature": 0,
-            "max_tokens": self.max_new_tokens,
-        }
-        headers = {"Content-Type": "application/json"}
-        api_key = self._resolved_api_key()
-        if api_key:
-            headers["Authorization"] = f"Bearer {api_key}"
+        with TRACER.start_as_current_span("cuebridge.model.openai_compatible.generate") as span:
+            payload = {
+                "model": self.model_id,
+                "messages": [self._format_message(message) for message in messages],
+                "temperature": 0,
+                "max_tokens": self.max_new_tokens,
+            }
+            headers = {"Content-Type": "application/json"}
+            api_key = self._resolved_api_key()
+            if api_key:
+                headers["Authorization"] = f"Bearer {api_key}"
 
-        response = self._request_sender()(
-            self._chat_completions_url(),
-            headers=headers,
-            json=payload,
-            timeout=self.request_timeout_seconds,
-        )
-        try:
-            response.raise_for_status()
-        except requests.HTTPError as exc:
-            detail = response.text.strip()
-            raise ValueError(
-                f"OpenAI-compatible backend request failed with {response.status_code}: {detail}"
-            ) from exc
-        data = response.json()
-        return _message_to_text(data["choices"][0]["message"]["content"]).strip()
+            url = self._chat_completions_url()
+            span.set_attribute("cuebridge.model_id", self.model_id)
+            span.set_attribute("cuebridge.api_host", urlparse(url).netloc)
+            span.set_attribute("cuebridge.input_messages", len(messages))
+            span.set_attribute(
+                "cuebridge.estimated_input_tokens", self.count_input_tokens(messages)
+            )
+            span.set_attribute("cuebridge.max_new_tokens", self.max_new_tokens)
+            span.set_attribute("cuebridge.timeout_seconds", self.request_timeout_seconds)
+            span.set_attribute("cuebridge.message_format", self._resolved_message_format())
+
+            response = self._request_sender()(
+                url,
+                headers=headers,
+                json=payload,
+                timeout=self.request_timeout_seconds,
+            )
+            span.set_attribute("cuebridge.http_status_code", response.status_code)
+            try:
+                response.raise_for_status()
+            except requests.HTTPError as exc:
+                detail = response.text.strip()
+                raise ValueError(
+                    f"OpenAI-compatible backend request failed with {response.status_code}: {detail}"
+                ) from exc
+            data = response.json()
+            translated = _message_to_text(data["choices"][0]["message"]["content"]).strip()
+            span.set_attribute("cuebridge.output_length", len(translated))
+            return translated
 
     def _request_sender(self) -> RequestSender:
         if self.request_sender is not None:

@@ -12,6 +12,7 @@ from langchain_core.runnables import RunnableConfig
 from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.graph.message import REMOVE_ALL_MESSAGES
 from langgraph.runtime import Runtime
+from opentelemetry import trace
 
 from cuebridge.cancellation import CancellationToken
 from cuebridge.contracts import (
@@ -21,6 +22,7 @@ from cuebridge.contracts import (
 )
 from cuebridge.model import OpenAICompatibleChatModel, TranslateGemmaChatModel
 
+TRACER = trace.get_tracer(__name__)
 OPENAI_COMPATIBLE_BACKEND_DEFAULTS = {
     "openai-compatible": {
         "api_base_url": "http://localhost:1234/v1",
@@ -49,21 +51,32 @@ def make_trim_messages_middleware(
     @before_model
     def trim_messages(state: AgentState, runtime: Runtime) -> dict[str, Any] | None:
         del runtime
-        messages = state["messages"]
-        trimmed = trim_messages_to_token_budget(
-            messages=messages,
-            token_counter=token_counter,
-            max_input_tokens=max_input_tokens,
-        )
-        if trimmed == messages:
-            return None
+        with TRACER.start_as_current_span("cuebridge.agent.trim_messages") as span:
+            messages = state["messages"]
+            before_count = len(messages)
+            before_tokens = token_counter(messages) if messages else 0
+            trimmed = trim_messages_to_token_budget(
+                messages=messages,
+                token_counter=token_counter,
+                max_input_tokens=max_input_tokens,
+            )
+            span.set_attribute("cuebridge.messages.before_count", before_count)
+            span.set_attribute("cuebridge.messages.before_tokens", before_tokens)
+            span.set_attribute("cuebridge.max_input_tokens", max_input_tokens)
+            span.set_attribute("cuebridge.messages.after_count", len(trimmed))
+            span.set_attribute(
+                "cuebridge.messages.after_tokens", token_counter(trimmed) if trimmed else 0
+            )
+            span.set_attribute("cuebridge.messages.trimmed", trimmed != messages)
+            if trimmed == messages:
+                return None
 
-        return {
-            "messages": [
-                RemoveMessage(id=REMOVE_ALL_MESSAGES),
-                *trimmed,
-            ]
-        }
+            return {
+                "messages": [
+                    RemoveMessage(id=REMOVE_ALL_MESSAGES),
+                    *trimmed,
+                ]
+            }
 
     return trim_messages
 
@@ -132,21 +145,32 @@ class LangChainSubtitleTranslator:
         text: str,
         cancellation_token: CancellationToken | None = None,
     ) -> str:
-        if cancellation_token is not None and cancellation_token.cancelled:
-            return ""
+        with TRACER.start_as_current_span("cuebridge.agent.translate_text") as span:
+            span.set_attribute("cuebridge.input_length", len(text))
+            span.set_attribute("cuebridge.retain_history", self._retain_history)
+            span.set_attribute("cuebridge.cancellation_requested", bool(cancellation_token))
+            if cancellation_token is not None and cancellation_token.cancelled:
+                span.set_attribute("cuebridge.cancelled_before_start", True)
+                return ""
 
-        translated = collect_translation_text(
-            self.translate_text_stream(text, cancellation_token=cancellation_token)
-        )
-        if translated or (cancellation_token is not None and cancellation_token.cancelled):
-            return translated
+            translated = collect_translation_text(
+                self.translate_text_stream(text, cancellation_token=cancellation_token)
+            )
+            span.set_attribute("cuebridge.stream_output_length", len(translated))
+            if translated or (cancellation_token is not None and cancellation_token.cancelled):
+                span.set_attribute("cuebridge.used_invoke_fallback", False)
+                span.set_attribute("cuebridge.output_length", len(translated))
+                return translated
 
-        response = self._agent.invoke({"messages": text}, self._request_config())
-        message = response["messages"][-1]
-        if isinstance(message, AIMessage):
-            return _message_text(message.content)
+            span.set_attribute("cuebridge.used_invoke_fallback", True)
+            response = self._agent.invoke({"messages": text}, self._request_config())
+            message = response["messages"][-1]
+            if isinstance(message, AIMessage):
+                resolved = _message_text(message.content)
+                span.set_attribute("cuebridge.output_length", len(resolved))
+                return resolved
 
-        raise TypeError("Expected streamed translation output from LangChain agent")
+            raise TypeError("Expected streamed translation output from LangChain agent")
 
     def translate_text_stream(
         self,

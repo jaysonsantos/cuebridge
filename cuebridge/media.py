@@ -11,6 +11,7 @@ from typing import Any
 
 import pysubs2
 from loguru import logger
+from opentelemetry import trace
 from PIL import Image, ImageOps
 
 SUBTITLE_FILE_EXTENSIONS = {".ass", ".srt", ".ssa", ".sub", ".vtt"}
@@ -58,6 +59,7 @@ TESSERACT_LANGUAGE_ALIASES = {
     "por": "por",
     "pt": "por",
 }
+TRACER = trace.get_tracer(__name__)
 
 
 @dataclass(frozen=True, slots=True)
@@ -173,6 +175,7 @@ def select_subtitle_stream(
     )
 
 
+@TRACER.start_as_current_span("cuebridge.media.extract_text_subtitle_stream_to_srt")
 def extract_text_subtitle_stream_to_srt(
     *,
     input_path: Path,
@@ -299,7 +302,9 @@ def _render_bitmap_subtitle_frames(
     return _parse_showinfo_frames(completed.stderr, image_paths)
 
 
-def _parse_showinfo_frames(stderr_output: str, image_paths: list[Path]) -> list[RenderedSubtitleFrame]:
+def _parse_showinfo_frames(
+    stderr_output: str, image_paths: list[Path]
+) -> list[RenderedSubtitleFrame]:
     parsed_frames: list[RenderedSubtitleFrame] = []
     for line in stderr_output.splitlines():
         match = SHOWINFO_FRAME_RE.search(line)
@@ -424,8 +429,7 @@ def _ocr_image_to_text(*, image_path: Path, ocr_language: str | None) -> str:
 
 def _clean_ocr_text(text: str) -> str:
     cleaned_lines = [
-        OCR_WHITESPACE_RE.sub(" ", line).strip()
-        for line in text.replace("\x0c", "").splitlines()
+        OCR_WHITESPACE_RE.sub(" ", line).strip() for line in text.replace("\x0c", "").splitlines()
     ]
     return "\n".join(line for line in cleaned_lines if line)
 
