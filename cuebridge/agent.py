@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Iterator
-from typing import Any, Protocol
+from typing import Any
 from uuid import uuid4
 
 from langchain.agents import AgentState, create_agent
@@ -14,33 +14,15 @@ from langgraph.graph.message import REMOVE_ALL_MESSAGES
 from langgraph.runtime import Runtime
 from opentelemetry import trace
 
+from cuebridge.backend_models import BackendModelConfig, SupportsTokenCounting, build_backend_model
 from cuebridge.cancellation import CancellationToken
 from cuebridge.contracts import (
     StreamingTextTranslator,
     TranslationChunk,
     collect_translation_text,
 )
-from cuebridge.model import OpenAICompatibleChatModel, TranslateGemmaChatModel
 
 TRACER = trace.get_tracer(__name__)
-OPENAI_COMPATIBLE_BACKEND_DEFAULTS = {
-    "openai-compatible": {
-        "api_base_url": "http://localhost:1234/v1",
-        "api_key_env": "OPENAI_API_KEY",
-    },
-    "cerebras": {
-        "api_base_url": "https://api.cerebras.ai/v1",
-        "api_key_env": "CEREBRAS_API_KEY",
-    },
-    "openrouter": {
-        "api_base_url": "https://openrouter.ai/api/v1",
-        "api_key_env": "OPENROUTER_API_KEY",
-    },
-}
-
-
-class SupportsTokenCounting(Protocol):
-    def count_input_tokens(self, messages: list[BaseMessage]) -> int: ...
 
 
 def make_trim_messages_middleware(
@@ -223,38 +205,24 @@ def build_subtitle_translator(
     thread_id: str | None = None,
     retain_history: bool = False,
 ) -> StreamingTextTranslator:
-    backend_name = backend.lower()
-
-    if backend_name == "hf-local":
-        model: SupportsTokenCounting = TranslateGemmaChatModel(
+    model = build_backend_model(
+        BackendModelConfig(
             source_lang_code=source_lang_code,
             target_lang_code=target_lang_code,
             model_id=model_id,
+            backend=backend,
             dtype=dtype,
             device=device,
             max_new_tokens=max_new_tokens,
             batch_size=batch_size,
-        )
-    elif backend_name in OPENAI_COMPATIBLE_BACKEND_DEFAULTS:
-        resolved_backend = _resolve_openai_compatible_backend(
-            backend=backend_name,
             api_base_url=api_base_url,
-            api_key_env=api_key_env,
-        )
-        model = OpenAICompatibleChatModel(
-            source_lang_code=source_lang_code,
-            target_lang_code=target_lang_code,
-            model_id=model_id,
-            api_base_url=resolved_backend["api_base_url"],
             api_key=api_key,
-            api_key_env=resolved_backend["api_key_env"],
+            api_key_env=api_key_env,
             request_timeout_seconds=request_timeout_seconds,
             reasoning_effort=reasoning_effort,
             message_format=message_format,
-            max_new_tokens=max_new_tokens,
         )
-    else:
-        raise ValueError(f"Unsupported backend: {backend}")
+    )
 
     return LangChainSubtitleTranslator(
         model,
@@ -262,19 +230,6 @@ def build_subtitle_translator(
         max_input_tokens=max_input_tokens,
         retain_history=retain_history,
     )
-
-
-def _resolve_openai_compatible_backend(
-    *,
-    backend: str,
-    api_base_url: str | None,
-    api_key_env: str | None,
-) -> dict[str, str]:
-    defaults = OPENAI_COMPATIBLE_BACKEND_DEFAULTS[backend]
-    return {
-        "api_base_url": api_base_url or defaults["api_base_url"],
-        "api_key_env": api_key_env or defaults["api_key_env"],
-    }
 
 
 def _message_text(content: str | list[dict[str, Any] | str]) -> str:

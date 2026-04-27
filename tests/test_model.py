@@ -377,7 +377,7 @@ def _build_translator_for_test(
 
 
 def _capture_openai_compatible_model_kwargs(monkeypatch) -> dict[str, object]:
-    from cuebridge import agent
+    from cuebridge import agent, backend_models
 
     captured_kwargs: dict[str, object] = {}
 
@@ -395,7 +395,7 @@ def _capture_openai_compatible_model_kwargs(monkeypatch) -> dict[str, object]:
             self.max_input_tokens = max_input_tokens
             self.retain_history = retain_history
 
-    monkeypatch.setattr(agent, "OpenAICompatibleChatModel", FakeOpenAICompatibleModel)
+    monkeypatch.setattr(backend_models, "OpenAICompatibleChatModel", FakeOpenAICompatibleModel)
     monkeypatch.setattr(agent, "LangChainSubtitleTranslator", FakeTranslator)
     return captured_kwargs
 
