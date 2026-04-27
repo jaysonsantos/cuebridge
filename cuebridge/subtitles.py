@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import re
 import tempfile
 from collections.abc import Iterator
 from dataclasses import dataclass
@@ -19,8 +18,8 @@ from cuebridge.contracts import (
     TranslationStatus,
 )
 from cuebridge.naming import build_output_path
+from cuebridge.subtitle_windows import AdaptiveSubtitleWindowTranslator
 
-SEGMENT_MARKER_RE = re.compile(r"\[\[SEG_(\d+)]]")
 TRACER = trace.get_tracer(__name__)
 
 
@@ -30,13 +29,6 @@ class TranslationResult:
     translated_events: int
     status: TranslationStatus = "completed"
     cancellation_reason: str | None = None
-
-
-@dataclass(frozen=True)
-class WindowTranslationResult:
-    texts: list[str]
-    had_retry: bool
-    cancelled: bool = False
 
 
 def translate_subtitle_file(
@@ -113,8 +105,11 @@ def iter_translate_subtitles(
         translated_events = 0
         translated_chunks = 0
         last_flushed_state: tuple[int, int] | None = None
-        current_window_size = window_size
-        consecutive_window_failures = 0
+        window_translator = AdaptiveSubtitleWindowTranslator(
+            translator=translator,
+            window_size=window_size,
+            cancellation_token=cancellation_token,
+        )
         translatable_events = [
             (index, event, decoded_text)
             for index, event in enumerate(subtitles, start=1)
@@ -143,12 +138,9 @@ def iter_translate_subtitles(
                 )
                 return
 
-            chunk = translatable_events[chunk_start : chunk_start + current_window_size]
-            attempted_window_size = len(chunk)
-            window_result = _translate_event_window_result(
-                chunk=[(event, source_text) for _index, event, source_text in chunk],
-                translator=translator,
-                cancellation_token=cancellation_token,
+            chunk = translatable_events[chunk_start : chunk_start + window_translator.window_size]
+            window_result = window_translator.translate(
+                [source_text for _index, _event, source_text in chunk]
             )
             if window_result.cancelled:
                 logger.info(
@@ -191,21 +183,6 @@ def iter_translate_subtitles(
                 )
 
             translated_chunks += 1
-
-            if attempted_window_size == current_window_size and current_window_size > 1:
-                if window_result.had_retry:
-                    consecutive_window_failures += 1
-                    if consecutive_window_failures >= 2:
-                        new_window_size = _next_smaller_window_size(current_window_size)
-                        logger.info(
-                            "Reducing adaptive subtitle window size from {} to {} after repeated marker retries",
-                            current_window_size,
-                            new_window_size,
-                        )
-                        current_window_size = new_window_size
-                        consecutive_window_failures = 0
-                else:
-                    consecutive_window_failures = 0
 
             if translated_chunks % flush_every_chunks == 0:
                 flush_event, last_flushed_state = _flush_event_if_needed(
@@ -250,111 +227,6 @@ def _encode_subtitle_text(text: str) -> str:
     return text.replace("\r\n", "\n").replace("\n", r"\N")
 
 
-@TRACER.start_as_current_span("cuebridge.subtitles.translate_event_window")
-def translate_event_window(
-    *,
-    chunk: list[tuple[object, str]],
-    translator: TextTranslator,
-    cancellation_token: CancellationToken | None = None,
-) -> list[str] | None:
-    result = _translate_event_window_result(
-        chunk=chunk,
-        translator=translator,
-        cancellation_token=cancellation_token,
-    )
-    if result.cancelled:
-        return None
-
-    return result.texts
-
-
-def _translate_event_window_result(
-    *,
-    chunk: list[tuple[object, str]],
-    translator: TextTranslator,
-    cancellation_token: CancellationToken | None = None,
-) -> WindowTranslationResult:
-    if cancellation_token is not None and cancellation_token.cancelled:
-        logger.debug("Skipping subtitle backend call because cancellation was already requested")
-        return WindowTranslationResult(texts=[], had_retry=False, cancelled=True)
-
-    if len(chunk) == 1:
-        return WindowTranslationResult(
-            texts=[translator.translate_text(chunk[0][1], cancellation_token=cancellation_token)],
-            had_retry=False,
-        )
-
-    prompt = _build_window_prompt([text for _event, text in chunk])
-    if cancellation_token is not None and cancellation_token.cancelled:
-        logger.debug("Skipping subtitle backend call because cancellation was already requested")
-        return WindowTranslationResult(texts=[], had_retry=False, cancelled=True)
-    translated = translator.translate_text(prompt, cancellation_token=cancellation_token)
-    segments = _parse_window_translation(translated, expected_segments=len(chunk))
-    if segments is not None:
-        return WindowTranslationResult(texts=segments, had_retry=False)
-
-    if cancellation_token is not None and cancellation_token.cancelled:
-        logger.debug("Skipping smaller-window retry for cancelled subtitle window")
-        return WindowTranslationResult(texts=[], had_retry=False, cancelled=True)
-
-    split_at = len(chunk) // 2
-    logger.debug(
-        "Window translation markers did not round-trip cleanly for {} events; retrying smaller windows",
-        len(chunk),
-    )
-    left = _translate_event_window_result(
-        chunk=chunk[:split_at],
-        translator=translator,
-        cancellation_token=cancellation_token,
-    )
-    if left.cancelled:
-        return WindowTranslationResult(texts=[], had_retry=True, cancelled=True)
-
-    right = _translate_event_window_result(
-        chunk=chunk[split_at:],
-        translator=translator,
-        cancellation_token=cancellation_token,
-    )
-    if right.cancelled:
-        return WindowTranslationResult(texts=[], had_retry=True, cancelled=True)
-
-    return WindowTranslationResult(
-        texts=[*left.texts, *right.texts],
-        had_retry=True,
-    )
-
-
-def _build_window_prompt(texts: list[str]) -> str:
-    parts: list[str] = []
-    for idx, text in enumerate(texts, start=1):
-        parts.append(f"[[SEG_{idx}]]")
-        parts.append(text)
-    return "\n".join(parts)
-
-
-@TRACER.start_as_current_span("cuebridge.subtitles.parse_window_translation")
-def _parse_window_translation(translated_text: str, *, expected_segments: int) -> list[str] | None:
-    matches = list(SEGMENT_MARKER_RE.finditer(translated_text))
-    if len(matches) != expected_segments:
-        return None
-
-    segments: list[str] = []
-    for idx, match in enumerate(matches):
-        expected_number = idx + 1
-        if int(match.group(1)) != expected_number:
-            return None
-
-        start = match.end()
-        end = matches[idx + 1].start() if idx + 1 < len(matches) else len(translated_text)
-        segment_text = translated_text[start:end].strip()
-        segments.append(segment_text)
-
-    if any(not segment for segment in segments):
-        return None
-
-    return segments
-
-
 @TRACER.start_as_current_span("cuebridge.subtitles.save_subtitles_atomic")
 def _save_subtitles_atomic(subtitles: pysubs2.SSAFile, output_path: Path) -> None:
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -374,13 +246,6 @@ def _save_subtitles_atomic(subtitles: pysubs2.SSAFile, output_path: Path) -> Non
     finally:
         if temp_path.exists():
             temp_path.unlink()
-
-
-def _next_smaller_window_size(window_size: int) -> int:
-    if window_size <= 2:
-        return 1
-
-    return (window_size + 1) // 2
 
 
 @TRACER.start_as_current_span("cuebridge.subtitles.flush_event")

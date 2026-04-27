@@ -6,10 +6,7 @@ import pysubs2
 from cuebridge.cancellation import CancellationToken
 from cuebridge.contracts import TranslationEvent
 from cuebridge.subtitles import (
-    _build_window_prompt,
-    _parse_window_translation,
     iter_translate_subtitles,
-    translate_event_window,
     translate_subtitle_file,
 )
 
@@ -44,61 +41,6 @@ class AdaptiveFakeTranslator:
         for idx in range(1, marker_count + 1):
             parts.append(f"[[SEG_{idx}]][pt-BR] segment {idx}")
         return "\n".join(parts)
-
-
-def test_parse_window_translation_splits_segments() -> None:
-    translated = "[[SEG_1]]First line\n[[SEG_2]]Second line"
-    assert _parse_window_translation(translated, expected_segments=2) == [
-        "First line",
-        "Second line",
-    ]
-
-
-def test_translate_event_window_falls_back_when_markers_are_missing() -> None:
-    translator = FakeTranslator(
-        [
-            "broken translation without markers",
-            "one",
-            "two",
-        ]
-    )
-    chunk = [(object(), "eins"), (object(), "zwei")]
-
-    result = translate_event_window(chunk=chunk, translator=translator)
-
-    assert result == ["one", "two"]
-    assert translator.calls[0] == _build_window_prompt(["eins", "zwei"])
-
-
-def test_translate_event_window_recursively_splits_large_broken_windows() -> None:
-    translator = FakeTranslator(
-        [
-            "broken translation without markers",
-            "[[SEG_1]]one\n[[SEG_2]]two",
-            "[[SEG_1]]three\n[[SEG_2]]four",
-        ]
-    )
-    chunk = [(object(), "eins"), (object(), "zwei"), (object(), "drei"), (object(), "vier")]
-
-    result = translate_event_window(chunk=chunk, translator=translator)
-
-    assert result == ["one", "two", "three", "four"]
-    assert translator.calls[0] == _build_window_prompt(["eins", "zwei", "drei", "vier"])
-    assert translator.calls[1] == _build_window_prompt(["eins", "zwei"])
-    assert translator.calls[2] == _build_window_prompt(["drei", "vier"])
-
-
-def test_translate_event_window_uses_marked_segments() -> None:
-    translator = FakeTranslator(
-        [
-            "[[SEG_1]]Hello\n[[SEG_2]]World",
-        ]
-    )
-    chunk = [(object(), "Hallo"), (object(), "Welt")]
-
-    result = translate_event_window(chunk=chunk, translator=translator)
-
-    assert result == ["Hello", "World"]
 
 
 def test_translate_subtitle_file_stops_before_starting_next_chunk(tmp_path: Path) -> None:
@@ -264,35 +206,6 @@ How are you?
     translated = pysubs2.load(str(output_path))
     assert translated[0].text == "[pt-BR] Hello there!"
     assert translated[1].text == "How are you?"
-
-
-def test_translate_event_window_skips_fallback_after_cancellation() -> None:
-    class CancellingTranslator:
-        def __init__(self) -> None:
-            self.calls: list[str] = []
-
-        def translate_text(
-            self,
-            text: str,
-            cancellation_token: CancellationToken | None = None,
-        ) -> str:
-            self.calls.append(text)
-            if cancellation_token is not None:
-                cancellation_token.cancel("cancel during window translation")
-            return ""
-
-    translator = CancellingTranslator()
-    token = CancellationToken()
-    chunk = [(object(), "eins"), (object(), "zwei")]
-
-    result = translate_event_window(
-        chunk=chunk,
-        translator=translator,
-        cancellation_token=token,
-    )
-
-    assert result is None
-    assert translator.calls == [_build_window_prompt(["eins", "zwei"])]
 
 
 def test_translate_subtitle_file_reduces_future_window_size_after_repeated_failures(
