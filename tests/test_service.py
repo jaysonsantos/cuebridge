@@ -5,7 +5,7 @@ import re
 from pathlib import Path
 
 import pysubs2
-from cuebridge import service
+from cuebridge import input_resolution, service
 from cuebridge.cancellation import CancellationToken
 from cuebridge.media import SubtitleStreamInfo
 from cuebridge.service import RuntimeOptions, SubtitleTranslationRequest, TranslatorConfig
@@ -313,9 +313,11 @@ Hello there!
         )
 
     monkeypatch.setattr(service, "build_subtitle_translator", fake_builder)
-    monkeypatch.setattr(service, "probe_subtitle_streams", fake_probe_subtitle_streams)
+    monkeypatch.setattr(input_resolution, "probe_subtitle_streams", fake_probe_subtitle_streams)
     monkeypatch.setattr(
-        service, "extract_text_subtitle_stream_to_srt", fake_extract_text_subtitle_stream_to_srt
+        input_resolution,
+        "extract_text_subtitle_stream_to_srt",
+        fake_extract_text_subtitle_stream_to_srt,
     )
     monkeypatch.setattr(service, "translate_subtitle_file", fake_translate_subtitle_file)
 
