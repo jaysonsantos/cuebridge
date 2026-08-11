@@ -6,7 +6,7 @@
 | --- | --- | --- | --- |
 | `liquid/lfm2.5-1.2b` | LM Studio | Recommended | Fastest tested usable model and best 24-line reference match |
 | `openai/gpt-5.4-nano` | OpenRouter | Viable | Correct output, but slower than LFM and weaker on the same slice |
-| `~deepseek/deepseek-v4-flash-latest` | OpenRouter | Smoke-tested; full file unavailable | Alias resolved successfully, but the 256-cue full-file run stalled before the first progress update |
+| `~deepseek/deepseek-v4-flash-latest` | OpenRouter | Full file generated | 1,459 cues generated successfully with 12-cue windows; quality remains a manual inspection task |
 | `qwen/qwen3.5-35b-a3b` | LM Studio | Not viable | Too slow for this workload and did not reliably return final subtitle text |
 
 ## Known Models
@@ -60,10 +60,14 @@ the adapter now handles that response shape. With the reset key, a bounded smoke
 the exact alias and CueBridge app attribution headers returned HTTP `200`, resolved to the
 concrete model `deepseek/deepseek-v4-flash-0731`, and used `148` reasoning tokens.
 
-The full-file run with the preset's `256`-cue window stalled at `0/1,459` for `2:58` without
-writing an output file, so it was aborted. Full-file completion, runtime, and subtitle quality
-remain unavailable; rerun with a smaller window or a provider configuration that completes the
-larger request before treating this as a benchmark result.
+The preset's `256`-cue full-file run stalled at `0/1,459` for `2:58`, so it was aborted. A
+complete artifact was then generated with the same preset, overriding to `12` cues and `1,024`
+output tokens per request. Independent windows ran with `8` workers; the final tail and several
+marker/empty-text cases were retried with smaller windows. Final validation found `1,459/1,459`
+events, matching timestamps, zero empty texts, and zero marker artifacts.
+
+Generated inspection artifact (kept outside Git):
+`Leberkaesjunkie--2019-1080p-x265-HEVC.pt-BR.srt`.
 
 ## Runtime
 
