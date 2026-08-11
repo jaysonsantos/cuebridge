@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from cuebridge.agent import build_subtitle_translator
+from cuebridge.agent import DEFAULT_MAX_LENGTH_CONTINUATIONS, build_subtitle_translator
 from cuebridge.cancellation import CancellationToken
 from cuebridge.input_resolution import (
     SubtitleInputSource,
@@ -34,6 +34,7 @@ class TranslatorConfig:
     thread_id: str | None = None
     retain_history: bool = False
     reasoning_effort: str | None = None
+    max_length_continuations: int = DEFAULT_MAX_LENGTH_CONTINUATIONS
 
 
 @dataclass(frozen=True)
@@ -71,6 +72,7 @@ def run_subtitle_translation(request: SubtitleTranslationRequest) -> Translation
         api_key_env=request.translator_config.api_key_env,
         request_timeout_seconds=request.translator_config.request_timeout_seconds,
         reasoning_effort=request.translator_config.reasoning_effort,
+        max_length_continuations=request.translator_config.max_length_continuations,
         max_input_tokens=request.translator_config.max_input_tokens,
         thread_id=request.translator_config.thread_id,
         retain_history=request.translator_config.retain_history,

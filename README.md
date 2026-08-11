@@ -131,6 +131,7 @@ These are the model setups currently known to work well enough to be worth tryin
 | `mlx-community/translategemma-4b-it-4bit` | OpenAI-compatible | Known-good | Good fit for LM Studio or other OpenAI-compatible local runtimes |
 | `liquid/lfm2.5-1.2b` | OpenAI-compatible | Fastest benchmarked local model | Current recommendation in [`docs/models-benchmark.md`](docs/models-benchmark.md) |
 | `openai/gpt-5.4-nano` | OpenRouter | Viable hosted option | Correct output, but slower than the best local benchmark |
+| `~deepseek/deepseek-v4-flash-latest` | OpenRouter | Preset available | Latest DeepSeek V4 Flash alias, 1M-token context, high reasoning effort |
 | `gemma4:latest` | Ollama via OpenAI-compatible | Usable with tuning | Works, but needs extra speed tuning because it is a thinking-capable general model |
 | `gemma4:e2b` | Ollama via OpenAI-compatible | Faster tradeoff | Smaller Gemma 4 variant if you want more speed and can accept some quality risk |
 
@@ -150,6 +151,24 @@ uv run cuebridge subtitles/movie.de.srt \
 ```
 
 CueBridge also supports an optional `--reasoning-effort` flag for OpenAI-compatible backends that expose thinking control. Accepted values are `none`, `low`, `medium`, and `high`.
+
+The `deepseek-v4-flash` preset selects OpenRouter's latest-model alias, uses
+`SUB_TRANSLATOR_API_KEY`, enables high reasoning effort, allocates 4,096 output tokens, and
+starts with 256 subtitle cues per request and allows up to 1,000,000 input tokens when
+retained history is enabled. Requests are attributed to the CueBridge app in OpenRouter.
+Explicit CLI options override preset values:
+
+```bash
+uv run cuebridge subtitles/movie.de.srt \
+  --preset deepseek-v4-flash \
+  --source-lang de \
+  --target-lang pt-BR
+```
+
+If an OpenAI-compatible response stops because it hit `--max-new-tokens`, CueBridge can ask
+the model to continue and stitch the parts together. Use `--max-length-continuations` to
+control the maximum number of follow-up calls; it defaults to a high bounded cap for long
+local-context models.
 
 For OpenRouter or similar services, point `--api-base-url` at the provider and either export an API key in `OPENAI_API_KEY` or pass `--api-key` directly:
 

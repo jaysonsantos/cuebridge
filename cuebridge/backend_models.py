@@ -5,7 +5,11 @@ from typing import Protocol
 
 from langchain_core.messages import BaseMessage
 
-from cuebridge.model import OpenAICompatibleChatModel, TranslateGemmaChatModel
+from cuebridge.model import (
+    DEFAULT_MAX_LENGTH_CONTINUATIONS,
+    OpenAICompatibleChatModel,
+    TranslateGemmaChatModel,
+)
 
 OPENAI_COMPATIBLE_BACKEND_DEFAULTS = {
     "openai-compatible": {
@@ -43,6 +47,7 @@ class BackendModelConfig:
     request_timeout_seconds: float = 120.0
     reasoning_effort: str | None = None
     message_format: str = "auto"
+    max_length_continuations: int = DEFAULT_MAX_LENGTH_CONTINUATIONS
 
 
 def build_backend_model(config: BackendModelConfig) -> SupportsTokenCounting:
@@ -76,6 +81,7 @@ def build_backend_model(config: BackendModelConfig) -> SupportsTokenCounting:
             reasoning_effort=config.reasoning_effort,
             message_format=config.message_format,
             max_new_tokens=config.max_new_tokens,
+            max_length_continuations=config.max_length_continuations,
         )
 
     raise ValueError(f"Unsupported backend: {config.backend}")

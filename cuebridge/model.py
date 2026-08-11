@@ -19,6 +19,36 @@ ProcessorLoader = Callable[..., Any]
 RequestSender = Callable[..., Any]
 TRACER = trace.get_tracer(__name__)
 
+DEFAULT_MAX_LENGTH_CONTINUATIONS = 75
+
+MESSAGE_FORMAT_AUTO = "auto"
+MESSAGE_FORMAT_PLAIN = "plain"
+MESSAGE_FORMAT_TRANSLATEGEMMA = "translategemma"
+
+CHAT_ROLE_KEY = "role"
+CHAT_CONTENT_KEY = "content"
+CHAT_USER_ROLE = "user"
+CHAT_ASSISTANT_ROLE = "assistant"
+
+OPENAI_MODEL_KEY = "model"
+OPENAI_MESSAGES_KEY = "messages"
+OPENAI_TEMPERATURE_KEY = "temperature"
+OPENAI_MAX_TOKENS_KEY = "max_tokens"
+OPENAI_REASONING_EFFORT_KEY = "reasoning_effort"
+OPENAI_CHOICES_KEY = "choices"
+OPENAI_MESSAGE_KEY = "message"
+OPENAI_FINISH_REASON_KEY = "finish_reason"
+OPENAI_FINISH_REASON_LENGTH = "length"
+
+HTTP_HEADER_CONTENT_TYPE = "Content-Type"
+HTTP_HEADER_AUTHORIZATION = "Authorization"
+HTTP_HEADER_OPENROUTER_REFERER = "HTTP-Referer"
+HTTP_HEADER_OPENROUTER_TITLE = "X-OpenRouter-Title"
+HTTP_CONTENT_TYPE_JSON = "application/json"
+OPENROUTER_HOST = "openrouter.ai"
+OPENROUTER_APP_REFERER = "https://github.com/jaysonsantos/cuebridge"
+OPENROUTER_APP_TITLE = "CueBridge"
+
 
 class TranslateGemmaChatModel(BaseChatModel):
     """LangChain chat wrapper around TranslateGemma with tokenizer-based history."""
@@ -164,8 +194,8 @@ class TranslateGemmaChatModel(BaseChatModel):
 
         if isinstance(message, HumanMessage):
             return {
-                "role": "user",
-                "content": [
+                CHAT_ROLE_KEY: CHAT_USER_ROLE,
+                CHAT_CONTENT_KEY: [
                     {
                         "type": "text",
                         "source_lang_code": self.source_lang_code,
@@ -177,8 +207,8 @@ class TranslateGemmaChatModel(BaseChatModel):
 
         if isinstance(message, AIMessage):
             return {
-                "role": "assistant",
-                "content": text,
+                CHAT_ROLE_KEY: CHAT_ASSISTANT_ROLE,
+                CHAT_CONTENT_KEY: text,
             }
 
         raise TypeError(
@@ -193,9 +223,11 @@ def _resolve_torch_dtype(dtype_name: str) -> torch.dtype:
         raise ValueError(f"Unsupported torch dtype: {dtype_name}") from exc
 
 
-def _message_to_text(content: str | list[str | dict[str, Any]]) -> str:
+def _message_to_text(content: str | list[str | dict[str, Any]] | None) -> str:
     if isinstance(content, str):
         return content
+    if content is None:
+        return ""
 
     parts: list[str] = []
     for item in content:
@@ -222,7 +254,8 @@ class OpenAICompatibleChatModel(BaseChatModel):
     request_timeout_seconds: float = 120.0
     reasoning_effort: str | None = None
     max_new_tokens: int = 256
-    message_format: str = "auto"
+    max_length_continuations: int = DEFAULT_MAX_LENGTH_CONTINUATIONS
+    message_format: str = MESSAGE_FORMAT_AUTO
     request_sender: RequestSender | None = Field(default=None, exclude=True, repr=False)
 
     model_config = ConfigDict(arbitrary_types_allowed=True)
@@ -241,6 +274,7 @@ class OpenAICompatibleChatModel(BaseChatModel):
             "source_lang_code": self.source_lang_code,
             "target_lang_code": self.target_lang_code,
             "max_new_tokens": self.max_new_tokens,
+            "max_length_continuations": self.max_length_continuations,
             "reasoning_effort": self.reasoning_effort,
             "message_format": self.message_format,
         }
@@ -276,17 +310,17 @@ class OpenAICompatibleChatModel(BaseChatModel):
         for message in messages:
             formatted = self._format_message(message)
             total += 8
-            total += _estimate_token_count(str(formatted["content"]))
+            total += _estimate_token_count(str(formatted[CHAT_CONTENT_KEY]))
         return total + 8
 
     def _format_message(self, message: BaseMessage) -> dict[str, Any]:
         text = _message_to_text(message.content)
 
         if isinstance(message, HumanMessage):
-            if self._resolved_message_format() == "translategemma":
+            if self._resolved_message_format() == MESSAGE_FORMAT_TRANSLATEGEMMA:
                 return {
-                    "role": "user",
-                    "content": [
+                    CHAT_ROLE_KEY: CHAT_USER_ROLE,
+                    CHAT_CONTENT_KEY: [
                         {
                             "type": "text",
                             "source_lang_code": self.source_lang_code,
@@ -297,8 +331,8 @@ class OpenAICompatibleChatModel(BaseChatModel):
                 }
 
             return {
-                "role": "user",
-                "content": _build_translation_prompt(
+                CHAT_ROLE_KEY: CHAT_USER_ROLE,
+                CHAT_CONTENT_KEY: _build_translation_prompt(
                     text=text,
                     source_lang_code=self.source_lang_code,
                     target_lang_code=self.target_lang_code,
@@ -307,8 +341,8 @@ class OpenAICompatibleChatModel(BaseChatModel):
 
         if isinstance(message, AIMessage):
             return {
-                "role": "assistant",
-                "content": text,
+                CHAT_ROLE_KEY: CHAT_ASSISTANT_ROLE,
+                CHAT_CONTENT_KEY: text,
             }
 
         raise TypeError(
@@ -320,20 +354,16 @@ class OpenAICompatibleChatModel(BaseChatModel):
 
     def _generate_translated_text(self, messages: list[BaseMessage]) -> str:
         with TRACER.start_as_current_span("cuebridge.model.openai_compatible.generate") as span:
-            payload = {
-                "model": self.model_id,
-                "messages": [self._format_message(message) for message in messages],
-                "temperature": 0,
-                "max_tokens": self.max_new_tokens,
-            }
-            if self.reasoning_effort is not None:
-                payload["reasoning_effort"] = self.reasoning_effort
-            headers = {"Content-Type": "application/json"}
+            request_messages = [self._format_message(message) for message in messages]
+            headers = {HTTP_HEADER_CONTENT_TYPE: HTTP_CONTENT_TYPE_JSON}
             api_key = self._resolved_api_key()
             if api_key:
-                headers["Authorization"] = f"Bearer {api_key}"
+                headers[HTTP_HEADER_AUTHORIZATION] = f"Bearer {api_key}"
 
             url = self._chat_completions_url()
+            if urlparse(url).hostname == OPENROUTER_HOST:
+                headers[HTTP_HEADER_OPENROUTER_REFERER] = OPENROUTER_APP_REFERER
+                headers[HTTP_HEADER_OPENROUTER_TITLE] = OPENROUTER_APP_TITLE
             span.set_attribute("cuebridge.model_id", self.model_id)
             span.set_attribute("cuebridge.api_host", urlparse(url).netloc)
             span.set_attribute("cuebridge.input_messages", len(messages))
@@ -343,27 +373,70 @@ class OpenAICompatibleChatModel(BaseChatModel):
             span.set_attribute("cuebridge.max_new_tokens", self.max_new_tokens)
             span.set_attribute("cuebridge.timeout_seconds", self.request_timeout_seconds)
             span.set_attribute("cuebridge.message_format", self._resolved_message_format())
+            span.set_attribute("cuebridge.max_length_continuations", self.max_length_continuations)
             if self.reasoning_effort is not None:
                 span.set_attribute("cuebridge.reasoning_effort", self.reasoning_effort)
 
-            response = self._request_sender()(
-                url,
-                headers=headers,
-                json=payload,
-                timeout=self.request_timeout_seconds,
-            )
-            span.set_attribute("cuebridge.http_status_code", response.status_code)
-            try:
-                response.raise_for_status()
-            except requests.HTTPError as exc:
-                detail = response.text.strip()
-                raise ValueError(
-                    f"OpenAI-compatible backend request failed with {response.status_code}: {detail}"
-                ) from exc
-            data = response.json()
-            translated = _message_to_text(data["choices"][0]["message"]["content"]).strip()
+            translated_parts: list[str] = []
+            continuations_used = 0
+            finish_reason: str | None = None
+            while True:
+                response = self._request_sender()(
+                    url,
+                    headers=headers,
+                    json=self._build_payload(request_messages),
+                    timeout=self.request_timeout_seconds,
+                )
+                span.set_attribute("cuebridge.http_status_code", response.status_code)
+                try:
+                    response.raise_for_status()
+                except requests.HTTPError as exc:
+                    detail = response.text.strip()
+                    raise ValueError(
+                        "OpenAI-compatible backend request failed with "
+                        f"{response.status_code}: {detail}"
+                    ) from exc
+
+                data = response.json()
+                choice = data[OPENAI_CHOICES_KEY][0]
+                finish_reason = choice.get(OPENAI_FINISH_REASON_KEY)
+                part = _message_to_text(choice[OPENAI_MESSAGE_KEY].get(CHAT_CONTENT_KEY, ""))
+                if part:
+                    translated_parts.append(part)
+
+                if finish_reason != OPENAI_FINISH_REASON_LENGTH:
+                    break
+                if continuations_used >= self.max_length_continuations:
+                    break
+                if not part:
+                    break
+
+                request_messages.extend(
+                    [
+                        _chat_message(CHAT_ASSISTANT_ROLE, part),
+                        _chat_message(CHAT_USER_ROLE, _build_length_continuation_prompt()),
+                    ]
+                )
+                continuations_used += 1
+
+            translated = "".join(translated_parts).strip()
+            if finish_reason is not None:
+                span.set_attribute("cuebridge.finish_reason", finish_reason)
+            span.set_attribute("cuebridge.length_continuations", continuations_used)
             span.set_attribute("cuebridge.output_length", len(translated))
             return translated
+
+    def _build_payload(self, messages: list[dict[str, Any]]) -> dict[str, Any]:
+        payload = {
+            OPENAI_MODEL_KEY: self.model_id,
+            OPENAI_MESSAGES_KEY: [*messages],
+            OPENAI_TEMPERATURE_KEY: 0,
+            OPENAI_MAX_TOKENS_KEY: self.max_new_tokens,
+        }
+        if self.reasoning_effort is not None:
+            payload[OPENAI_REASONING_EFFORT_KEY] = self.reasoning_effort
+
+        return payload
 
     def _request_sender(self) -> RequestSender:
         if self.request_sender is not None:
@@ -381,11 +454,15 @@ class OpenAICompatibleChatModel(BaseChatModel):
         return None
 
     def _resolved_message_format(self) -> str:
-        if self.message_format != "auto":
+        if self.message_format != MESSAGE_FORMAT_AUTO:
             return self.message_format
-        if "translategemma" in self.model_id.lower():
-            return "translategemma"
-        return "plain"
+        if MESSAGE_FORMAT_TRANSLATEGEMMA in self.model_id.lower():
+            return MESSAGE_FORMAT_TRANSLATEGEMMA
+        return MESSAGE_FORMAT_PLAIN
+
+
+def _chat_message(role: str, content: Any) -> dict[str, Any]:
+    return {CHAT_ROLE_KEY: role, CHAT_CONTENT_KEY: content}
 
 
 def _build_translation_prompt(
@@ -397,8 +474,20 @@ def _build_translation_prompt(
     return (
         f"You are a professional translator from {source_lang_code} to {target_lang_code}. "
         f"Translate the text faithfully and naturally into {target_lang_code}. "
+        "If the input contains segment markers like [[SEG_1]], preserve every marker exactly "
+        "and in the same order; translate only the text after each marker. "
         "Return only the translation, with no commentary or explanations.\n\n"
         f"{text}"
+    )
+
+
+def _build_length_continuation_prompt() -> str:
+    return (
+        "Continue the previous translation exactly where it stopped. "
+        "Do not repeat text that was already returned. "
+        "If the previous response ended mid-word or mid-segment, continue from the next "
+        "character. Preserve any [[SEG_n]] markers exactly. "
+        "Return only the remaining translation."
     )
 
 

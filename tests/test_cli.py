@@ -153,6 +153,110 @@ def test_cli_accepts_reasoning_effort(monkeypatch, subtitle_samples) -> None:
     assert requests[0].translator_config.reasoning_effort == "none"
 
 
+def test_cli_applies_deepseek_v4_flash_preset(monkeypatch, subtitle_samples) -> None:
+    requests: list[SubtitleTranslationRequest] = []
+
+    def fake_service(request: SubtitleTranslationRequest) -> TranslationResult:
+        requests.append(request)
+        return TranslationResult(output_path=Path("/tmp/out.srt"), translated_events=1)
+
+    monkeypatch.setattr(cli, "run_subtitle_translation", fake_service)
+    runner = CliRunner()
+
+    result = runner.invoke(
+        cli.main,
+        [
+            subtitle_samples[0].filename,
+            "--preset",
+            "deepseek-v4-flash",
+            "--source-lang",
+            "de",
+            "--target-lang",
+            "pt-BR",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert requests[0].translator_config == TranslatorConfig(
+        model_id="~deepseek/deepseek-v4-flash-latest",
+        backend="openai-compatible",
+        api_base_url="https://openrouter.ai/api/v1",
+        api_key_env="SUB_TRANSLATOR_API_KEY",
+        max_new_tokens=4096,
+        reasoning_effort="high",
+        max_input_tokens=1_000_000,
+    )
+    assert requests[0].runtime_options == RuntimeOptions(window_size=256)
+
+
+def test_cli_explicit_model_options_override_preset(monkeypatch, subtitle_samples) -> None:
+    requests: list[SubtitleTranslationRequest] = []
+
+    def fake_service(request: SubtitleTranslationRequest) -> TranslationResult:
+        requests.append(request)
+        return TranslationResult(output_path=Path("/tmp/out.srt"), translated_events=1)
+
+    monkeypatch.setattr(cli, "run_subtitle_translation", fake_service)
+    runner = CliRunner()
+
+    result = runner.invoke(
+        cli.main,
+        [
+            subtitle_samples[0].filename,
+            "--preset",
+            "deepseek-v4-flash",
+            "--source-lang",
+            "de",
+            "--target-lang",
+            "pt-BR",
+            "--reasoning-effort",
+            "none",
+            "--model-id",
+            "custom/model",
+            "--max-input-tokens",
+            "1800",
+            "--max-new-tokens",
+            "256",
+            "--window-size",
+            "1",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert requests[0].translator_config.model_id == "custom/model"
+    assert requests[0].translator_config.reasoning_effort == "none"
+    assert requests[0].translator_config.max_input_tokens == 1800
+    assert requests[0].translator_config.max_new_tokens == 256
+    assert requests[0].runtime_options.window_size == 1
+
+
+def test_cli_accepts_max_length_continuations(monkeypatch, subtitle_samples) -> None:
+    requests: list[SubtitleTranslationRequest] = []
+
+    def fake_service(request: SubtitleTranslationRequest) -> TranslationResult:
+        requests.append(request)
+        return TranslationResult(output_path=Path("/tmp/out.srt"), translated_events=1)
+
+    monkeypatch.setattr(cli, "run_subtitle_translation", fake_service)
+    runner = CliRunner()
+
+    result = runner.invoke(
+        cli.main,
+        [
+            subtitle_samples[0].filename,
+            "--source-lang",
+            "en",
+            "--target-lang",
+            "pt-BR",
+            "--max-length-continuations",
+            "4",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert requests[0].translator_config.max_length_continuations == 4
+
+
 def test_cli_accepts_video_processing_options(monkeypatch, subtitle_samples) -> None:
     requests: list[SubtitleTranslationRequest] = []
 

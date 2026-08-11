@@ -6,6 +6,7 @@
 | --- | --- | --- | --- |
 | `liquid/lfm2.5-1.2b` | LM Studio | Recommended | Fastest tested usable model and best 24-line reference match |
 | `openai/gpt-5.4-nano` | OpenRouter | Viable | Correct output, but slower than LFM and weaker on the same slice |
+| `~deepseek/deepseek-v4-flash-latest` | OpenRouter | Smoke-tested; full file unavailable | Alias resolved successfully, but the 256-cue full-file run stalled before the first progress update |
 | `qwen/qwen3.5-35b-a3b` | LM Studio | Not viable | Too slow for this workload and did not reliably return final subtitle text |
 
 ## Known Models
@@ -40,6 +41,29 @@ flowchart LR
 - Main comparison slice: first `24` subtitle events
 - Larger stability slice for LFM: first `120` subtitle events
 - Quality metric: simple line-by-line string similarity against the existing PT-BR subtitle
+
+## DeepSeek V4 Flash Live Attempt
+
+On 2026-08-11, the `deepseek-v4-flash` preset was run against the full
+`Leberkaesjunkie--2019-1080p-x265-HEVC.de.srt` input from the user's media volume. The file
+contains `1,459` subtitle events.
+
+```bash
+uv run cuebridge "/Volumes/media-1/Movies/Leberkäsjunkie (2019)/Leberkaesjunkie--2019-1080p-x265-HEVC.de.srt" \
+  --preset deepseek-v4-flash \
+  --source-lang de \
+  --target-lang pt-BR
+```
+
+The initial run exposed an adapter bug because OpenRouter returned `message.content = null`;
+the adapter now handles that response shape. With the reset key, a bounded smoke request using
+the exact alias and CueBridge app attribution headers returned HTTP `200`, resolved to the
+concrete model `deepseek/deepseek-v4-flash-0731`, and used `148` reasoning tokens.
+
+The full-file run with the preset's `256`-cue window stalled at `0/1,459` for `2:58` without
+writing an output file, so it was aborted. Full-file completion, runtime, and subtitle quality
+remain unavailable; rerun with a smaller window or a provider configuration that completes the
+larger request before treating this as a benchmark result.
 
 ## Runtime
 

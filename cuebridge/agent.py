@@ -14,7 +14,12 @@ from langgraph.graph.message import REMOVE_ALL_MESSAGES
 from langgraph.runtime import Runtime
 from opentelemetry import trace
 
-from cuebridge.backend_models import BackendModelConfig, SupportsTokenCounting, build_backend_model
+from cuebridge.backend_models import (
+    DEFAULT_MAX_LENGTH_CONTINUATIONS,
+    BackendModelConfig,
+    SupportsTokenCounting,
+    build_backend_model,
+)
 from cuebridge.cancellation import CancellationToken
 from cuebridge.contracts import (
     StreamingTextTranslator,
@@ -201,6 +206,7 @@ def build_subtitle_translator(
     request_timeout_seconds: float = 120.0,
     reasoning_effort: str | None = None,
     message_format: str = "auto",
+    max_length_continuations: int = DEFAULT_MAX_LENGTH_CONTINUATIONS,
     max_input_tokens: int = 1800,
     thread_id: str | None = None,
     retain_history: bool = False,
@@ -221,6 +227,7 @@ def build_subtitle_translator(
             request_timeout_seconds=request_timeout_seconds,
             reasoning_effort=reasoning_effort,
             message_format=message_format,
+            max_length_continuations=max_length_continuations,
         )
     )
 

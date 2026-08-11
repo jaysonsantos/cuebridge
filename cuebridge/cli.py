@@ -2,13 +2,16 @@ from __future__ import annotations
 
 import sys
 from pathlib import Path
+from typing import Any
 
 import click
 from dotenv import load_dotenv
 from loguru import logger
 from opentelemetry import trace
 
+from cuebridge.presets import MODEL_PRESETS, get_model_preset
 from cuebridge.service import (
+    DEFAULT_MAX_LENGTH_CONTINUATIONS,
     RuntimeOptions,
     SubtitleTranslationRequest,
     TranslatorConfig,
@@ -21,6 +24,11 @@ TRACER = trace.get_tracer(__name__)
 
 @click.command(context_settings={"show_default": True})
 @click.argument("input_path", type=click.Path(exists=True, dir_okay=False, path_type=Path))
+@click.option(
+    "--preset",
+    type=click.Choice(sorted(MODEL_PRESETS)),
+    help="Apply defaults for a known model/provider setup. Explicit options still win.",
+)
 @click.option("--source-lang", required=True, help="Source language code, for example en or pt-BR.")
 @click.option(
     "--target-lang", required=True, help="Target language code, for example de-DE or pt-BR."
@@ -46,6 +54,12 @@ TRACER = trace.get_tracer(__name__)
 )
 @click.option("--device", default=None, help="Optional explicit device like cpu, cuda, or cuda:0.")
 @click.option("--max-new-tokens", default=256, type=click.IntRange(min=1))
+@click.option(
+    "--max-length-continuations",
+    default=DEFAULT_MAX_LENGTH_CONTINUATIONS,
+    type=click.IntRange(min=0),
+    help="Maximum follow-up calls after an OpenAI-compatible response stops for length.",
+)
 @click.option(
     "--batch-size",
     default=1,
@@ -120,6 +134,7 @@ TRACER = trace.get_tracer(__name__)
 @click.option("--verbose", is_flag=True, help="Enable debug logging.")
 def main(
     input_path: Path,
+    preset: str | None,
     source_lang: str,
     target_lang: str,
     output_path: Path | None,
@@ -128,6 +143,7 @@ def main(
     dtype: str,
     device: str | None,
     max_new_tokens: int,
+    max_length_continuations: int,
     batch_size: int,
     api_base_url: str | None,
     message_format: str,
@@ -148,6 +164,42 @@ def main(
     load_dotenv()
     configure_logging(verbose=verbose)
 
+    if preset is not None:
+        model_preset = get_model_preset(preset)
+        context = click.get_current_context()
+        backend = _use_preset_default(context, "backend", backend, model_preset.backend)
+        model_id = _use_preset_default(context, "model_id", model_id, model_preset.model_id)
+        api_base_url = _use_preset_default(
+            context, "api_base_url", api_base_url, model_preset.api_base_url
+        )
+        api_key_env = _use_preset_default(
+            context, "api_key_env", api_key_env, model_preset.api_key_env
+        )
+        reasoning_effort = _use_preset_default(
+            context, "reasoning_effort", reasoning_effort, model_preset.reasoning_effort
+        )
+        if model_preset.max_new_tokens is not None:
+            max_new_tokens = _use_preset_default(
+                context,
+                "max_new_tokens",
+                max_new_tokens,
+                model_preset.max_new_tokens,
+            )
+        if model_preset.max_input_tokens is not None:
+            max_input_tokens = _use_preset_default(
+                context,
+                "max_input_tokens",
+                max_input_tokens,
+                model_preset.max_input_tokens,
+            )
+        if model_preset.window_size is not None:
+            window_size = _use_preset_default(
+                context,
+                "window_size",
+                window_size,
+                model_preset.window_size,
+            )
+
     request = SubtitleTranslationRequest(
         input_source=input_path,
         source_lang_code=source_lang,
@@ -159,6 +211,7 @@ def main(
             dtype=dtype,
             device=device,
             max_new_tokens=max_new_tokens,
+            max_length_continuations=max_length_continuations,
             batch_size=batch_size,
             api_base_url=api_base_url,
             message_format=message_format,
@@ -198,3 +251,14 @@ def main(
 def configure_logging(*, verbose: bool) -> None:
     logger.remove()
     logger.add(sys.stderr, level="DEBUG" if verbose else "INFO")
+
+
+def _use_preset_default(
+    context: click.Context,
+    parameter_name: str,
+    current: Any,
+    preset_value: Any,
+) -> Any:
+    if context.get_parameter_source(parameter_name) == click.core.ParameterSource.DEFAULT:
+        return preset_value
+    return current

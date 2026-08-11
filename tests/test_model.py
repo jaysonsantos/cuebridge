@@ -2,7 +2,11 @@ from __future__ import annotations
 
 import torch
 from cuebridge.agent import LangChainSubtitleTranslator, trim_messages_to_token_budget
-from cuebridge.model import OpenAICompatibleChatModel, TranslateGemmaChatModel
+from cuebridge.model import (
+    DEFAULT_MAX_LENGTH_CONTINUATIONS,
+    OpenAICompatibleChatModel,
+    TranslateGemmaChatModel,
+)
 from langchain_core.messages import AIMessage, HumanMessage
 
 
@@ -197,6 +201,10 @@ def test_langchain_subtitle_translator_reuses_thread_when_history_is_retained(mo
 class FakeResponse:
     status_code = 200
 
+    def __init__(self, content: str | None = "ola mundo", finish_reason: str = "stop") -> None:
+        self.content = content
+        self.finish_reason = finish_reason
+
     def raise_for_status(self):
         return None
 
@@ -205,8 +213,9 @@ class FakeResponse:
             "choices": [
                 {
                     "message": {
-                        "content": "ola mundo",
-                    }
+                        "content": self.content,
+                    },
+                    "finish_reason": self.finish_reason,
                 }
             ]
         }
@@ -268,6 +277,80 @@ def test_openai_compatible_model_formats_chat_completions_request() -> None:
     assert streamed[0].message.chunk_position == "last"
 
 
+def test_openai_compatible_plain_prompt_preserves_segment_markers() -> None:
+    captured_calls: list[dict] = []
+
+    def fake_request_sender(url, **kwargs):
+        captured_calls.append({"url": url, **kwargs})
+        return FakeResponse()
+
+    model = OpenAICompatibleChatModel(
+        source_lang_code="de",
+        target_lang_code="pt-BR",
+        model_id="general-translator",
+        api_base_url="http://localhost:1234/v1",
+        request_sender=fake_request_sender,
+    )
+
+    model._generate([HumanMessage(content="[[SEG_1]]Hallo\n[[SEG_2]]Welt")])
+
+    content = captured_calls[0]["json"]["messages"][0]["content"]
+    assert "preserve every marker exactly" in content
+    assert "[[SEG_1]]Hallo\n[[SEG_2]]Welt" in content
+
+
+def test_openai_compatible_model_continues_length_limited_response() -> None:
+    captured_calls: list[dict] = []
+    responses = [
+        FakeResponse("[[SEG_1]]Ola", finish_reason="length"),
+        FakeResponse("\n[[SEG_2]]mundo", finish_reason="stop"),
+    ]
+
+    def fake_request_sender(url, **kwargs):
+        captured_calls.append({"url": url, **kwargs})
+        return responses.pop(0)
+
+    model = OpenAICompatibleChatModel(
+        source_lang_code="de",
+        target_lang_code="pt-BR",
+        model_id="general-translator",
+        api_base_url="http://localhost:1234/v1",
+        max_length_continuations=1,
+        request_sender=fake_request_sender,
+    )
+
+    result = model._generate([HumanMessage(content="[[SEG_1]]Hallo\n[[SEG_2]]Welt")])
+
+    assert result.generations[0].message.content == "[[SEG_1]]Ola\n[[SEG_2]]mundo"
+    assert len(captured_calls) == 2
+    continuation_messages = captured_calls[1]["json"]["messages"]
+    assert continuation_messages[-2] == {"role": "assistant", "content": "[[SEG_1]]Ola"}
+    continuation_prompt = continuation_messages[-1]["content"]
+    assert "Continue the previous translation exactly where it stopped" in continuation_prompt
+
+
+def test_openai_compatible_model_respects_length_continuation_limit() -> None:
+    captured_calls: list[dict] = []
+
+    def fake_request_sender(url, **kwargs):
+        captured_calls.append({"url": url, **kwargs})
+        return FakeResponse("[[SEG_1]]Ola", finish_reason="length")
+
+    model = OpenAICompatibleChatModel(
+        source_lang_code="de",
+        target_lang_code="pt-BR",
+        model_id="general-translator",
+        api_base_url="http://localhost:1234/v1",
+        max_length_continuations=0,
+        request_sender=fake_request_sender,
+    )
+
+    result = model._generate([HumanMessage(content="[[SEG_1]]Hallo\n[[SEG_2]]Welt")])
+
+    assert result.generations[0].message.content == "[[SEG_1]]Ola"
+    assert len(captured_calls) == 1
+
+
 def test_openai_compatible_model_includes_reasoning_effort_when_requested() -> None:
     captured_calls: list[dict] = []
 
@@ -290,6 +373,43 @@ def test_openai_compatible_model_includes_reasoning_effort_when_requested() -> N
     assert captured_calls[0]["json"]["reasoning_effort"] == "none"
 
 
+def test_openai_compatible_model_handles_empty_message_content() -> None:
+    model = OpenAICompatibleChatModel(
+        source_lang_code="de",
+        target_lang_code="pt-BR",
+        model_id="~deepseek/deepseek-v4-flash-latest",
+        api_base_url="https://openrouter.ai/api/v1",
+        request_sender=lambda url, **kwargs: FakeResponse(content=None),
+    )
+
+    result = model._generate([HumanMessage(content="Hallo Welt")])
+
+    assert result.generations[0].message.content == ""
+
+
+def test_openrouter_requests_include_cuebridge_app_attribution() -> None:
+    captured_calls: list[dict] = []
+
+    def fake_request_sender(url, **kwargs):
+        captured_calls.append({"url": url, **kwargs})
+        return FakeResponse()
+
+    model = OpenAICompatibleChatModel(
+        source_lang_code="de",
+        target_lang_code="pt-BR",
+        model_id="~deepseek/deepseek-v4-flash-latest",
+        api_base_url="https://openrouter.ai/api/v1",
+        request_sender=fake_request_sender,
+    )
+
+    model._generate([HumanMessage(content="Hallo Welt")])
+
+    assert captured_calls[0]["headers"]["HTTP-Referer"] == (
+        "https://github.com/jaysonsantos/cuebridge"
+    )
+    assert captured_calls[0]["headers"]["X-OpenRouter-Title"] == "CueBridge"
+
+
 def test_build_subtitle_translator_uses_cerebras_defaults(monkeypatch) -> None:
     captured_kwargs = _capture_openai_compatible_model_kwargs(monkeypatch)
 
@@ -306,6 +426,7 @@ def test_build_subtitle_translator_uses_cerebras_defaults(monkeypatch) -> None:
         "reasoning_effort": None,
         "message_format": "auto",
         "max_new_tokens": 256,
+        "max_length_continuations": DEFAULT_MAX_LENGTH_CONTINUATIONS,
     }
 
 
@@ -325,6 +446,7 @@ def test_build_subtitle_translator_uses_openrouter_defaults(monkeypatch) -> None
         "reasoning_effort": None,
         "message_format": "auto",
         "max_new_tokens": 256,
+        "max_length_continuations": DEFAULT_MAX_LENGTH_CONTINUATIONS,
     }
 
 
